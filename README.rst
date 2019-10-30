@@ -3,7 +3,7 @@ veranda
 =======
 
 
-Add a short description here!
+VEctor and RAster Data Access
 
 
 Description
