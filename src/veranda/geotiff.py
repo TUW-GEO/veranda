@@ -385,6 +385,8 @@ class GeoTiffFile(object):
                               self.src.RasterXSize)
 
             self.ndim = len(self.shape)
+            self.geotransform = self.src.GetGeoTransform()
+            self.spatialref = self.src.GetProjection()
 
             # assume all bands are like the first
             self.dtype = gdal.GetDataTypeName(
