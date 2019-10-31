@@ -21,9 +21,9 @@ from tempfile import mkdtemp
 
 import numpy as np
 
-from pyraster.gdalport import write_image
-from pyraster.gdalport import open_image
-from pyraster.gdalport import call_gdal_util
+from veranda.gdalport import write_image
+from veranda.gdalport import open_image
+from veranda.gdalport import call_gdal_util
 
 
 class GdalportTest(unittest.TestCase):

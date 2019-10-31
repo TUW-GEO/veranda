@@ -24,8 +24,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from pyraster.timestack import GeoTiffRasterTimeStack
-from pyraster.timestack import NcRasterTimeStack
+from veranda.timestack import GeoTiffRasterTimeStack
+from veranda.timestack import NcRasterTimeStack
 
 
 class GeoTiffRasterTimeStackTest(unittest.TestCase):

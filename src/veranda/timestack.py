@@ -22,8 +22,8 @@ import pandas as pd
 import xarray as xr
 import netCDF4
 
-from pyraster.geotiff import GeoTiffFile, get_pixel_coords
-from pyraster.netcdf import NcFile
+from veranda.geotiff import GeoTiffFile, get_pixel_coords
+from veranda.netcdf import NcFile
 
 gdal_dtype = {"uint8": gdal.GDT_Byte,
               "int16": gdal.GDT_Int16,

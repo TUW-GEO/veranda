@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from pyraster.netcdf import NcFile
+from veranda.netcdf import NcFile
 
 
 class NcTest(unittest.TestCase):
