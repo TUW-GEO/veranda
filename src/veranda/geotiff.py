@@ -339,6 +339,13 @@ class GeoTiffFile(object):
         if self.mode == 'r':
             self._open()
 
+    @property
+    def metadata(self):
+        if self.src is not None:
+            return self.src.GetMetadata()
+        else:
+            return None
+
     def _open(self, xsize=None, ysize=None, dtype=None):
         """
         Open file.

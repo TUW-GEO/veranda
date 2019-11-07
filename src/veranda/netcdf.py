@@ -99,6 +99,7 @@ class NcFile(object):
 
         self.overwrite = overwrite
         self.nc_format = nc_format
+        self.shape = None
         self.chunksizes = chunksizes
         self.time_units = time_units
         self.var_chunk_cache = var_chunk_cache
@@ -106,6 +107,13 @@ class NcFile(object):
 
         if self.mode in ['r', 'r_xarray', 'r_netcdf']:
             self._open()
+
+    @property
+    def metadata(self):
+        if self.src is not None:
+            return self.src.ncattrs()
+        else:
+            return None
 
     def _open(self, x_dim=None, y_dim=None):
         """
@@ -136,6 +144,14 @@ class NcFile(object):
         if self.mode == 'a':
             self.src = netCDF4.Dataset(self.filename, mode=self.mode)
             self.src_var = self.src.variables
+
+            # try to get geotags from dataset attributes
+            if self.mode in ['a', 'r', 'r_netcdf', 'r_xarray']:
+                metadata = self.get_global_atts()
+                self.geotransform = metadata['GeoTransform'] \
+                    if 'GeoTransform' in metadata.keys() else None
+                self.spatialref = metadata['spatial_ref'] \
+                    if 'spatial_ref' in metadata.keys() else None
 
         if self.mode == 'w':
             self.src = netCDF4.Dataset(self.filename, mode=self.mode,
@@ -209,6 +225,8 @@ class NcFile(object):
                 y[:] = self.geotransform[3] + \
                     (0.5 + np.arange(y_dim)) * self.geotransform[4] + \
                     (0.5 + np.arange(y_dim)) * self.geotransform[5]
+
+            self.shape = (self.src.dims['y'], self.src.dims['x'])
 
     def write(self, ds):
         """
