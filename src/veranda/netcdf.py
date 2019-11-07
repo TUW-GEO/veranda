@@ -129,10 +129,17 @@ class NcFile(object):
         if self.mode in ['r', 'r_xarray']:
             self.src = xr.open_dataset(
                 self.filename, mask_and_scale=self.auto_scale)
+            if 'time' in list(self.src.dims.keys()) and self.src.variables['time'].dtype == 'float':
+                timestamps = netCDF4.num2date(self.src.variables['time'], self.time_units)
+                self.src = self.src.assign_coords({'time': timestamps})
             self.src_var = self.src
 
         if self.mode == 'r_netcdf':
             self.src = netCDF4.Dataset(self.filename, mode='r')
+            self.src_var = self.src.variables
+            if 'time' in list(self.src.dimensions.keys()) and self.src.variables['time'].dtype == 'float':
+                timestamps = netCDF4.num2date(np.array(self.src.variables['time']), self.time_units)
+                self.src.variables['time'] = timestamps
             self.src_var = self.src.variables
 
             for var in self.src_var:
@@ -145,13 +152,13 @@ class NcFile(object):
             self.src = netCDF4.Dataset(self.filename, mode=self.mode)
             self.src_var = self.src.variables
 
-            # try to get geotags from dataset attributes
-            if self.mode in ['a', 'r', 'r_netcdf', 'r_xarray']:
-                metadata = self.get_global_atts()
-                self.geotransform = metadata['GeoTransform'] \
-                    if 'GeoTransform' in metadata.keys() else None
-                self.spatialref = metadata['spatial_ref'] \
-                    if 'spatial_ref' in metadata.keys() else None
+        # try to get geotags from dataset attributes
+        if self.mode in ['a', 'r', 'r_netcdf', 'r_xarray']:
+            metadata = self.get_global_atts()
+            self.geotransform = metadata['GeoTransform'] \
+                if 'GeoTransform' in metadata.keys() else None
+            self.spatialref = metadata['spatial_ref'] \
+                if 'spatial_ref' in metadata.keys() else None
 
         if self.mode == 'w':
             self.src = netCDF4.Dataset(self.filename, mode=self.mode,
@@ -196,8 +203,7 @@ class NcFile(object):
                                     ('spatial_ref', spatial_ref),
                                     ('GeoTransform', geotransform)])
 
-                crs = self.src.createVariable(self.gmn, 'S1', ())
-                crs.setncatts(attr)
+                self.src.setncatts(attr)
 
             if 'time' not in self.src.dimensions:
                 self.src.createDimension('time', None)
@@ -226,7 +232,10 @@ class NcFile(object):
                     (0.5 + np.arange(y_dim)) * self.geotransform[4] + \
                     (0.5 + np.arange(y_dim)) * self.geotransform[5]
 
+        if hasattr(self.src, 'dims'):
             self.shape = (self.src.dims['y'], self.src.dims['x'])
+        else:
+            self.shape = (self.src.dimensions['y'].size, self.src.dimensions['x'].size)
 
     def write(self, ds):
         """
@@ -366,7 +375,13 @@ class NcFile(object):
         atts : dict
             Global attributes stored as dict.
         """
-        self.src.ncattrs()
+        if hasattr(self.src, "attrs"):
+            return self.src.attrs
+        else:
+            attrs = dict()
+            for attr_name in self.src.ncattrs():
+                attrs[attr_name] = self.src.getncattr(attr_name)
+            return attrs
 
     def close(self):
         """
