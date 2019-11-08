@@ -155,7 +155,7 @@ class NcFile(object):
         # try to get geotags from dataset attributes
         if self.mode in ['a', 'r', 'r_netcdf', 'r_xarray']:
             metadata = self.get_global_atts()
-            self.geotransform = metadata['GeoTransform'] \
+            self.geotransform = tuple(map(float, metadata['GeoTransform'].split(' '))) \
                 if 'GeoTransform' in metadata.keys() else None
             self.spatialref = metadata['spatial_ref'] \
                 if 'spatial_ref' in metadata.keys() else None
@@ -175,7 +175,6 @@ class NcFile(object):
                     if len(x) == 2:
                         proj4_dict[x[0]] = x[1]
 
-                # projcs = spref.GetAttrValue('PROJCS').lower()
                 self.gmn = spref.GetAttrValue('PROJECTION').lower()
                 false_e = float(proj4_dict['+x_0'])
                 false_n = float(proj4_dict['+y_0'])
@@ -197,7 +196,6 @@ class NcFile(object):
                                     ('latitude_of_projection_origin', lat_po),
                                     ('longitude_of_projection_origin', lon_po),
                                     ('long_name', long_name),
-                                    # ('longitude_of_prime_meridian', lon_pm),
                                     ('semi_major_axis', semi_major_axis),
                                     ('inverse_flattening', inverse_flattening),
                                     ('spatial_ref', spatial_ref),
