@@ -1,10 +1,9 @@
 name: veranda
 channels:
     - conda-forge
-    - defaults
 dependencies:
     - python=3.6
-    - gdal>=3.0.0
+    - gdal<=3.0.0
     - numpy
     - pandas
     - pyproj

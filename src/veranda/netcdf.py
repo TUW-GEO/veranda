@@ -84,7 +84,7 @@ class NcFile(object):
                  geotransform=(0, 1, 0, 0, 0, 1), spatialref=None,
                  overwrite=True, nc_format="NETCDF4_CLASSIC", chunksizes=None,
                  time_units="days since 1900-01-01 00:00:00",
-                 var_chunk_cache=None, auto_scale=True):
+                 var_chunk_cache=None, auto_scale=True, shape=None, data_var_name=None):
 
         self.filename = filename
         self.mode = mode
@@ -99,14 +99,14 @@ class NcFile(object):
 
         self.overwrite = overwrite
         self.nc_format = nc_format
-        self.shape = None
+        self.shape = shape
         self.chunksizes = chunksizes
         self.time_units = time_units
         self.var_chunk_cache = var_chunk_cache
         self.auto_scale = auto_scale
 
         if self.mode in ['r', 'r_xarray', 'r_netcdf']:
-            self._open()
+            self._open(data_var_name=data_var_name)
 
     @property
     def metadata(self):
@@ -115,17 +115,20 @@ class NcFile(object):
         else:
             return None
 
-    def _open(self, x_dim=None, y_dim=None):
+    def _open(self, x_dim=None, y_dim=None, data_var_name=None):
         """
         Open file.
 
         Parameters
         ----------
-        x_dim : int
+        x_dim : int, optional
             Size of x dimension.
-        y_dim : int
+        y_dim : int, optional
             Size of y dimension.
+        data_var_name: str, optional
+            Data variable name of netCDF4/xarray object.
         """
+
         if self.mode in ['r', 'r_xarray']:
             self.src = xr.open_dataset(
                 self.filename, mask_and_scale=self.auto_scale)
@@ -152,13 +155,18 @@ class NcFile(object):
             self.src = netCDF4.Dataset(self.filename, mode=self.mode)
             self.src_var = self.src.variables
 
-        # try to get geotags from dataset attributes
-        if self.mode in ['a', 'r', 'r_netcdf', 'r_xarray']:
-            metadata = self.get_global_atts()
-            self.geotransform = tuple(map(float, metadata['GeoTransform'].split(' '))) \
-                if 'GeoTransform' in metadata.keys() else None
-            self.spatialref = metadata['spatial_ref'] \
-                if 'spatial_ref' in metadata.keys() else None
+        if self.mode in ['r', 'a', 'r_netcdf', 'r_xarray']:
+            if data_var_name is None:
+                for var_name in self.src_var.keys():
+                    if "grid_mapping" in self.src_var[var_name].attrs:
+                        data_var_name = var_name
+
+            if data_var_name is not None and "grid_mapping" in self.src_var[data_var_name].attrs:
+                gmn = self.src_var[data_var_name].attrs["grid_mapping"]
+                self.geotransform = tuple(map(float, self.src_var[gmn].attrs['GeoTransform'].split(' '))) \
+                    if 'GeoTransform' in self.src_var[gmn].attrs.keys() else None
+                self.spatialref = self.src_var[gmn].attrs['spatial_ref'] \
+                    if 'spatial_ref' in self.src_var[gmn].attrs.keys() else None
 
         if self.mode == 'w':
             self.src = netCDF4.Dataset(self.filename, mode=self.mode,
@@ -201,7 +209,8 @@ class NcFile(object):
                                     ('spatial_ref', spatial_ref),
                                     ('GeoTransform', geotransform)])
 
-                self.src.setncatts(attr)
+                crs = self.src.createVariable(self.gmn, 'S1', ())
+                crs.setncatts(attr)
 
             if 'time' not in self.src.dimensions:
                 self.src.createDimension('time', None)
@@ -308,6 +317,7 @@ class NcFile(object):
         data : xarray.Dataset or netCDF4.variables
             Data stored in NetCDF file. Data type depends on read mode.
         """
+
         return self.src_var
 
     def decode_xarr_var(self, var):
