@@ -467,7 +467,11 @@ class NcRasterTimeStack(object):
         if self.mfdataset is None:
             self._build_stack()
 
-        return self.mfdataset
+        if 'time' in list(self.mfdataset.dims.keys()) and self.mfdataset.variables['time'].dtype == 'float':
+            timestamps = netCDF4.num2date(self.mfdataset['time'], self.time_units)
+            return self.mfdataset.assign_coords({'time': timestamps})
+        else:
+            return self.mfdataset
 
     def iter_img(self, var_name):
         """
