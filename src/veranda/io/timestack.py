@@ -451,7 +451,7 @@ class NcRasterTimeStack(object):
         """
         if self.file_ts is not None:
             self.mfdataset = xr.open_mfdataset(
-                self.file_ts['filenames'].tolist(), chunks=self.chunks, combine='nested')
+                self.file_ts['filenames'].tolist(), chunks=self.chunks, combine='nested', concat_dim='time')
         else:
             raise RuntimeError('Building stack failed')
 
