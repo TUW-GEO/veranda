@@ -451,7 +451,7 @@ class NcRasterTimeStack(object):
         """
         if self.file_ts is not None:
             self.mfdataset = xr.open_mfdataset(
-                self.file_ts['filenames'].tolist(), chunks=self.chunks)
+                self.file_ts['filenames'].tolist(), chunks=self.chunks, combine='by_coords')
         else:
             raise RuntimeError('Building stack failed')
 
@@ -467,7 +467,11 @@ class NcRasterTimeStack(object):
         if self.mfdataset is None:
             self._build_stack()
 
-        return self.mfdataset
+        if 'time' in list(self.mfdataset.dims.keys()) and self.mfdataset.variables['time'].dtype == 'float':
+            timestamps = netCDF4.num2date(self.mfdataset['time'], self.time_units)
+            return self.mfdataset.assign_coords({'time': timestamps})
+        else:
+            return self.mfdataset
 
     def iter_img(self, var_name):
         """
