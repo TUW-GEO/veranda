@@ -1,15 +1,44 @@
 import os
 import pandas as pd
 import numpy as np
+import xarray as xr
 import matplotlib.pyplot as plt
+from shapely.geometry import Polygon
+from shapely.Point import Point
 
 from veranda.io.netcdf import NcFile
 from veranda.io.geotiff import GeoTiffFile
 from veranda.io.timestack import GeoTiffRasterTimeStack
 from veranda.io.timestack import NcRasterTimeStack
 
+from veranda.errors import DataTypeUnknown
+from veranda.errors import DataTypeMismatch
+
 from geospade.definition import RasterGeometry
+from geospade.definition import RasterGrid
 from geospade.spatial_ref import SpatialRef
+from geospade.operation import rasterise_polygon
+from geospade.operation import any_geom2ogr_geom
+from geospade.operation import xy2ij
+from geospade.operation import ij2xy
+
+
+def _any_geom2ogr_geom(func):
+    """
+    A decorator which converts an input geometry (first argument) into an OGR.geometry object
+    """
+
+    def wrapper(*args, **kwargs):
+        osr_spref = kwargs.get("osr_spref", None)
+        ogr_geom = any_geom2ogr_geom(args[0], osr_spref=osr_spref)
+        if len(args) > 1:
+            return func(ogr_geom, **kwargs)
+        else:
+            args = args[1:]
+            return func(ogr_geom, *args, **kwargs)
+
+    return wrapper
+
 
 def _file_io_decorator(func):
     """
@@ -55,22 +84,130 @@ def _file_io_decorator(func):
     return wrapper
 
 
-def get_stack_io_class(filepath):
-    """
-    """
-    tiff_ext = ('.tiff', '.tif', '.geotiff')
-    netcdf_ext = ('.nc', '.netcdf', '.ncdf')
+def _stack_io(mode='r'):
+    def _inner_stack_io(func):
+        """
+        Decorator which checks whether parsed file arguments are acutual IO-Classes
+        such as NcFile or GeoTiffFile. If string is parsed as file, then
+        a corresponding IO-Class object is parsed into the original function
+        """
+        tiff_ext = ('.tiff', '.tif', '.geotiff')
+        netcdf_ext = ('.nc', '.netcdf', '.ncdf')
 
-    # file is probably string
-    format = os.path.splitext(filepath)[1].lower()
-    if format in tiff_ext:
-        io_class = GeoTiffRasterTimeStack
-    elif format in netcdf_ext:
-        io_class = NcRasterTimeStack
+        def wrapper(self, *args, **kwargs):
+            ds = kwargs.get('ds', None)
+            ref_filepath = self.rds[0].filepath
+            format = os.path.splitext(ref_filepath)[1].lower()
+            if format in tiff_ext:
+                io_class = GeoTiffRasterTimeStack
+            elif format in netcdf_ext:
+                io_class = NcRasterTimeStack
+            else:
+                raise IOError('File format not supported.')
+
+            create_ds = False
+            if self._ds is None:
+                if ds is not None:
+                    self._ds = ds
+                else:
+                    create_ds = True
+            else:
+                if self._ds.mode != mode:
+                    create_ds = True
+
+            if create_ds:
+                filepaths = [rd.filepath for rd in self.rds]
+                df = pd.DataFrame({'filenames': filepaths})
+                geotransform = kwargs.get('geotransform', self.geometry.gt)
+                spatialref = kwargs.get('spatialref', self.geometry.wkt)
+                add_kwargs = {'geotransform': geotransform,
+                              'spatialref': spatialref}
+                kwargs.update(add_kwargs)
+                self._ds = io_class(file_ts=df, mode=mode, **kwargs)
+
+            return func(self, *args, **kwargs)
+
+        return wrapper
+    return _inner_stack_io
+
+
+def convert_dtype(data, dtype, xs=None, ys=None, zs=None, band=1, x_dim='x', y_dim='y', z_dim='time'):
+    """
+    Converts `data` into an array-like object defined by `dtype`. It supports NumPy arrays, Xarray arrays and
+    Pandas data frames.
+
+    Parameters
+    ----------
+    data : list of numpy.ndarray or list of xarray.DataSets or numpy.ndarray or xarray.DataArray
+    dtype : str
+        Data type of the returned array-like structure (default is 'xarray'). It can be:
+            - 'xarray': loads data as an xarray.DataSet
+            - 'numpy': loads data as a numpy.ndarray
+            - 'dataframe': loads data as a pandas.DataFrame
+    xs : list, optional
+        List of world system coordinates in X direction.
+    ys : list, optional
+        List of world system coordinates in Y direction.
+    temporal_dim_name : str, optional
+        Name of the temporal dimension (default: 'time').
+    band : int or str, optional
+        Band number or name (default is 1).
+
+    Returns
+    -------
+    list of numpy.ndarray or list of xarray.DataSets or pandas.DataFrame or numpy.ndarray or xarray.DataSet
+        Data as an array-like object.
+    """
+
+    if dtype == "xarray":
+        if isinstance(data, list) and isinstance(data[0], np.ndarray):
+            ds = []
+            for i, entry in enumerate(data):
+                x = xs[i]
+                y = ys[i]
+                if not isinstance(x, list):
+                    x = [x]
+                if not isinstance(y, list):
+                    y = [y]
+                xr_ar = xr.DataArray(entry, coords={z_dim: zs, y_dim: y, x_dim: x},
+                                     dims=[z_dim, 'y', 'x'])
+                ds.append(xr.Dataset(data_vars={band: xr_ar}))
+            converted_data = xr.merge(ds)
+        elif isinstance(data, list) and isinstance(data[0], xr.Dataset):
+            converted_data = xr.merge(data)
+            converted_data.attrs = data[0].attrs
+        elif isinstance(data, np.ndarray):
+            xr_ar = xr.DataArray(data, coords={z_dim: zs, y_dim: ys, x_dim: xs}, dims=[z_dim, y_dim, x_dim])
+            converted_data = xr.Dataset(data_vars={band: xr_ar})
+        elif isinstance(data, xr.Dataset):
+            converted_data = data
+        else:
+            raise DataTypeMismatch(type(data), dtype)
+
+    elif dtype == "numpy":
+        if isinstance(data, list) and isinstance(data[0], np.ndarray):
+            if len(data) == 1:
+                converted_data = data[0]
+            else:
+                converted_data = data
+        elif isinstance(data, list) and isinstance(data[0], xr.Dataset):
+            converted_data = [np.array(entry[band].data) for entry in data]
+            if len(converted_data) == 1:
+                converted_data = converted_data[0]
+        elif isinstance(data, xr.Dataset):
+            converted_data = np.array(data[band].data)
+        elif isinstance(data, np.ndarray):
+            converted_data = data
+        else:
+            raise DataTypeMismatch(type(data), dtype)
+    elif dtype == "dataframe":
+        xr_ds = convert_dtype(data, 'xarray', xs=xs, ys=ys, zs=zs, band=band, x_dim=x_dim, y_dim=y_dim, z_dim=z_dim)
+        converted_data = xr_ds.to_dataframe()
     else:
-        raise IOError('File format not supported.')
+        raise DataTypeMismatch(type(data), dtype)
 
-    return io_class
+    return converted_data
+
 
 class RasterData(object):
     """
@@ -147,8 +284,7 @@ class RasterData(object):
         RasterData
 
         """
-        rows = data.shape[-2]
-        cols = data.shape[-1]
+        rows, cols = data.shape
         return cls(rows, cols, sref, gt, data, parent=parent)
 
     @classmethod
@@ -319,42 +455,227 @@ class RasterData(object):
         return fig
 
 
-class RasterStack(RasterData):
+class RasterStack(object):
+    def __init__(self, raster_datas, data=None, geometry=None, parent=None, io=None):
+        self.raster_datas = raster_datas
+        self.data = data
+        self.io = io
+        self.parent = parent
+        self._ds = None
 
-    def __init__(self, geometry):
         self.geometry = geometry
+        if self.geometry is None:
+            if self.is_congruent:
+                self.geometry = raster_datas.values()[0].geometry
 
-    def plot(self, id=None):
+    @classmethod
+    def from_filepaths(cls, filepaths, label, **kwargs):
+        pass
+
+    @classmethod
+    def from_array(cls, filepaths, label, **kwargs):
+        pass
+
+    @classmethod
+    def from_others(cls, others, dtype=None, geometry=None, **kwargs):
+        if geometry is None:
+            geometry = RasterGeometry.get_common_geometry([other.geometry for other in others])
+
+        if dtype == "numpy":
+            combined_data = np.zeros((len(others[0].raster_datas.index), geometry.rows, geometry.cols))
+            for other in others:
+                if other is not None:
+                    min_col, max_row, max_col, min_row = other.geometry.get_rel_extent(geometry, unit='px')
+                    combined_data[:, min_row:(max_row+1), min_col:(max_col+1)] = other.data
+
+            return RasterStack.from_array(combined_data, labels=others[0].index)
+        elif dtype == "xarray":
+            datasets = [other.data for other in others if other is not None]
+            return RasterStack.from_array(xr.combine_by_coords(datasets), labels=others[0].index)
+        else:
+            raise DataTypeUnknown(dtype)
+
+    def crop(self, geometry, inplace=True):
+        """
+        Crops the raster stack by a geometry. ˋinplaceˋ determines, whether a new object
+        is returned or the cropping happens on the current raster stack.
+        The resulting ˋRasterStackˋ object contains no-data value in pixels that
+        are not contained in the original RasterData object
+
+        Parameters
+        ----------
+        geometry : RasterGeometry or shapely geometry
+            geometry to which current RasterData should be cropped
+        inplace : bool
+            if true, current object gets modified, else new object is returned
+
+        Returns
+        -------
+        RasterData or None
+            Depending on inplace argument
+
+        """
+
+        # create new geometry
+        new_geom = self.geometry & geometry
+
+        # create new data
+        data = None
+        if self.__check_data():
+            min_col, max_row, max_col, min_row = new_geom.get_rel_extent(self.geometry, unit="px")
+            data = self.data[:, min_row:(max_row + 1), min_col:(max_col + 1)]
+            mask = rasterise_polygon(new_geom.geometry)
+            data = np.ma.array(data, mask=np.stack([mask] * data.shape[0], axis=0))
+
+        if inplace:
+            self.geometry = new_geom
+            self.parent = self
+            self.data = data
+        else:
+            return RasterStack(self.raster_datas, geometry=new_geom, parent=self, data=data)
+
+    # TODO: in progress
+    @_stack_io(mode='w')
+    def write(self, data=None, **kwargs):
+        if data is None:
+            if self.data is not None:
+                data = self.data
+            else:
+                raise Exception('Please specify data to write.')
+
+        self._ds.write(data, **kwargs)
+
+    @_any_geom2ogr_geom
+    def load_by_geom(self, geom, **kwargs):
+        raster_stack = self.crop(geom, inplace=False)
+        min_col, _, _, min_row = raster_stack.geometry.get_rel_extent(self.geometry, unit='px')
+        return raster_stack.load(min_col, min_row,
+                                 col_size=raster_stack.geometry.cols,
+                                 row_size=raster_stack.geometry.rows,
+                                 **kwargs)
+
+    def load_by_coord(self, x, y, osr_spref=None, **kwargs):
+        return self.load_by_geom((x, y), osr_spref=osr_spref, **kwargs)
+
+    @_stack_io(mode='r')
+    def load(self, col, row, col_size=1, row_size=1, band=1, dtype="numpy", x_dim="x", y_dim="y", z_dim="time",
+             inplace=True):
+
+        min_col = col
+        min_row = row
+        max_col = col + col_size
+        max_row =  row + row_size
+        pixel_polygon = Polygon(((0, 0), (self.geometry.cols, 0), (self.geometry.cols, self.geometry.rows),
+                                 (0, self.geometry.rows), (0, 0)))
+        ll_point = Point((min_col, max_row))
+        ur_point = Point((max_col, min_row))
+        if ll_point.intersects(pixel_polygon) and ur_point.intersects(pixel_polygon):
+            col = 0 if col < 0 else col
+            row = 0 if row < 0 else row
+            max_col = self.geometry.cols-1 if max_col >= self.geometry.cols else max_col
+            max_row = self.geometry.rows-1 if max_row >= self.geometry.rows else max_row
+            col_size = max_col - col
+            row_size = max_row - row
+
+            data = self._ds.read(col, row, col_size=col_size, row_size=row_size, band=band)
+            xs = None
+            ys = None
+            zs = None
+            if dtype != "numpy":  # data should be referenced with coordinates
+                max_col = col + col_size
+                max_row = row + row_size
+                if self.geometry.is_axis_parallel:  # if the raster is axis parallel
+                    xs, _ = ij2xy(np.arange(col, max_col), np.array([row] * col_size), self.geometry.gt)
+                    _, ys = ij2xy(np.array([col] * row_size), np.arange(row, max_row), self.geometry.gt)
+                else:  # raster is not axis-parallel, each point/pixel needs to be projected
+                    cols, rows = np.meshgrid(np.arange(col, max_col), np.arange(row, max_row))
+                    xs, ys = ij2xy(cols, rows)
+
+                zs = self.raster_datas.index
+
+            data = convert_dtype(data, dtype, xs, ys, zs, band=band, x_dim=x_dim, y_dim=y_dim, z_dim=z_dim)
+
+            if inplace:
+                self.data = data
+                return self
+            else:
+                return RasterStack.from_data(data=data)
+        else:
+            return None
+
+    def plot(self, id=None, axis_unit='px', cm=None, **kwargs):
+        if id is None:
+            if self.is_congruent:
+                fig = plt.figure()
+                ax = fig.add_subplot(111, projection='3d')
+                cols, rows = np.meshgrid(np.arange(0, self.geometry.width, 1), np.arange(0, self.geometry.height, 1))
+                for band, rd in enumerate(self.raster_datas.values()):
+                    data = rd.data
+                    bands = np.ones(cols.shape)*band
+                    ax.plot_surface(cols, -rows, bands, rstride=1, cstride=1, facecolors=cm(data), shade=False)
+        else:
+            if id not in self.raster_datas.keys():
+                err_msg = "'{}' is not a valid index.".format(id)
+                raise KeyError(err_msg)
+            else:
+                rd = self.raster_datas[id]
+                rd.plot(**kwargs)
+
+    @property
+    def is_congruent(self):
+        ref_geom = self.raster_datas[0].geometry
+        return all([ref_geom == rd.geometry for rd in self.raster_datas.values()])
+
+    def __check_data(self):
+        if self.data is not None:
+            n = len(self.data.shape)
+            if n != 3:
+                raise Exception('Data has {} dimensions, but 3 dimensions are required.'.format(n))
+            return True
+        else:
+            return False
 
 
 class RasterMosaic(object):
 
-    def __init__(self, arg, grid=None, aggregator=None):
-        self.grid = grid
+    def __init__(self, raster_stacks, grid=None, aggregator=None):
+
         self.aggregator = aggregator
-        self._structure = self.__init_structure(arg)
-        self._ds = {}
-        sres =
-        self.geom =
+        self.raster_stacks = raster_stacks
 
-    def __init_structure(self, arg):
-        if isinstance(arg, pd.DataFrame):
-            structure = arg
-        elif isinstance(arg, dict):
-            structure = self.__dict2structure(arg)
-        elif isinstance(arg, list):
-            arg_dict = dict()
-            for i, layer in enumerate(arg):
-                arg_dict[i] = layer
-            structure = self.__dict2structure(arg_dict)
+        raster_geoms = [raster_stack.geometry for raster_stack in self.raster_stacks
+                        if raster_stack.geometry is not None]
+
+        if grid is None:
+            self.grid = RasterGrid(raster_geoms)
         else:
-            raise Exception("")
+            self.grid = grid
 
-        return structure
+        self.geometry = RasterGeometry.get_common_geometry(raster_geoms)
 
-    def __dict2structure(self, struct_dict):
+    @classmethod
+    def from_df(cls, arg, **kwargs):
+        pass
+
+    @classmethod
+    def from_list(cls, arg, **kwargs):
+        arg_dict = dict()
+        for i, layer in enumerate(arg):
+            arg_dict[i] = layer
+
+        return cls.from_dict(arg_dict, **kwargs)
+
+    @classmethod
+    def from_dict(cls, arg, **kwargs):
+        structure = RasterMosaic._dict2structure(arg)
+        raster_stacks = cls._build_raster_stacks(structure)
+
+        return cls(raster_stacks)
+
+    @staticmethod
+    def _dict2structure(struct_dict):
         structure = dict()
-        structure["rd"] = []
+        structure["raster_data"] = []
         structure["spatial_id"] = []
         structure["layer_id"] = []
         geoms = []
@@ -368,7 +689,7 @@ class RasterMosaic(object):
                 else:
                     raise Exception("")
 
-                structure['rd'].append(rd)
+                structure['raster_data'].append(rd)
                 if rd.geometry.id is not None:
                     structure['spatial_id'].append(rd.geometry.id)
                 else:
@@ -384,22 +705,46 @@ class RasterMosaic(object):
 
         return pd.DataFrame(structure)
 
-    def __build_stack(self):
-        struct_groups = self._structure.groupby(by="spatial_id")
+    @staticmethod
+    def _build_raster_stacks(structure):
+        struct_groups = structure.groupby(by="spatial_id")
+        raster_stacks = {'raster_stack': []}
+        spatial_ids = []
         for struct_group in struct_groups:
-            self._ds
+            raster_datas = struct_group['raster_data']
+            raster_datas.set_index(struct_group['layer_id'], inplace=True)
+            raster_stacks['raster_stack'].append(RasterStack(raster_datas))
+            spatial_ids.append(struct_group['spatial_id'])
+
+        return pd.Series(raster_stacks, index=spatial_ids)
+
+    @_any_geom2ogr_geom
+    def read_by_geom(self, geom, osr_sref=None, band=1, dtype='numpy', **kwargs):
+        raster_grid = self.grid.crop(geom)
+        geometry = self.geometry.crop(geom)
+        spatial_ids = raster_grid.geom_ids
+        raster_stacks = [raster_stack.load_by_geom(geom, osr_sref=osr_sref, dtype=dtype, band=band, inplace=False, **kwargs)
+                         for raster_stack in self.raster_stacks[spatial_ids]]
+
+        return RasterStack.from_others(raster_stacks, dtype=dtype, geometry=geometry)
+
+    def read_by_coord(self, x, y, osr_sref=None, band=1, dtype='numpy', **kwargs):
+        point = Point((x, y))
+        return self.read_by_geom(point, osr_sref=osr_sref, band=band, dtype=dtype, **kwargs)
+
+    def read(self, col, row, col_size=1, row_size=1, band=1, dtype="numpy", **kwargs):
+        if col_size == 1 and row_size == 1:
+            x, y = ij2xy(col, row, self.geometry.gt)
+            return self.read_by_coord(x, y, band=band, dtype=dtype, **kwargs)
+        else:
+            max_col = col + col_size
+            max_row = row + row_size
+            min_x, min_y = ij2xy(col, max_row, self.geometry.gt)
+            max_x, max_y = ij2xy(max_col, row, self.geometry.gt)
+            bbox = [(min_x, min_y), (max_x, max_y)]
+            return self.read_by_geom(bbox, band=band, dtype=dtype, **kwargs)
 
 
-    def __filepaths2stack(self, filepaths):
-        io_class = get_stack_io_class(filepaths[0])
-        df = pd.DataFrame({'filenames': filepaths})
-        return io_class(mode='r', file_ts=df)
 
-    def read_by_geom(self, geom):
-        pass
 
-    def read_by_pixels(self, geom):
-        pass
 
-    def write(self):
-        pass

@@ -22,8 +22,8 @@ import pandas as pd
 import xarray as xr
 import netCDF4
 
-from veranda.geotiff import GeoTiffFile, get_pixel_coords
-from veranda.netcdf import NcFile
+from veranda.io.geotiff import GeoTiffFile, get_pixel_coords
+from veranda.io.netcdf import NcFile
 
 gdal_dtype = {"uint8": gdal.GDT_Byte,
               "int16": gdal.GDT_Int16,
@@ -45,6 +45,8 @@ r_gdal_dtype = {gdal.GDT_Byte: "byte",
                 gdal.GDT_CFloat32: "cfloat32",
                 gdal.GDT_CFloat64: "cfloat64"}
 
+
+# TODO: define abstract base IO class
 
 class GeoTiffRasterTimeStack(object):
 
@@ -171,7 +173,7 @@ class GeoTiffRasterTimeStack(object):
 
         return self.read_ts(col[0], row[1], col_size, row_size)
 
-    def read_ts(self, col, row, col_size=1, row_size=1):
+    def read_ts(self, col, row, col_size=1, row_size=1, band=1):
         """
         Read time series from raster time stack.
 
@@ -191,6 +193,10 @@ class GeoTiffRasterTimeStack(object):
         data : numpy.ndarray
             Data set.
         """
+        if self.file_band != band:
+            self.file_band = band
+            self._build_stack()
+
         if self.vrt is None:
             self._build_stack()
 
@@ -455,7 +461,7 @@ class NcRasterTimeStack(object):
         else:
             raise RuntimeError('Building stack failed')
 
-    def read(self):
+    def load_ds(self, ):
         """
         Read time series or image from raster time stack.
 
@@ -472,6 +478,10 @@ class NcRasterTimeStack(object):
             return self.mfdataset.assign_coords({'time': timestamps})
         else:
             return self.mfdataset
+
+    def read(self, col, row, col_size=1, row_size=1, band=1):
+        ds = self.load_ds()
+        return ds[band][:, row:(row+row_size), col:(col+col_size)]
 
     def iter_img(self, var_name):
         """
@@ -492,7 +502,7 @@ class NcRasterTimeStack(object):
         if self.mfdataset is None:
             self._build_stack()
 
-        ds = self.read()
+        ds = self.load_ds()
 
         for i in range(ds[var_name].shape[0]):
             time_stamp = netCDF4.num2date(ds['time'][i], self.time_units)
