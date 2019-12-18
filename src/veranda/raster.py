@@ -1,10 +1,11 @@
 import os
+import copy
 import pandas as pd
 import numpy as np
 import xarray as xr
 import matplotlib.pyplot as plt
 from shapely.geometry import Polygon
-from shapely.Point import Point
+from shapely.geometry import Point
 
 from veranda.io.netcdf import NcFile
 from veranda.io.geotiff import GeoTiffFile
@@ -23,65 +24,60 @@ from geospade.operation import xy2ij
 from geospade.operation import ij2xy
 
 
-def _any_geom2ogr_geom(func):
-    """
-    A decorator which converts an input geometry (first argument) into an OGR.geometry object
-    """
-
-    def wrapper(*args, **kwargs):
-        osr_spref = kwargs.get("osr_spref", None)
-        ogr_geom = any_geom2ogr_geom(args[0], osr_spref=osr_spref)
-        if len(args) > 1:
-            return func(ogr_geom, **kwargs)
-        else:
-            args = args[1:]
-            return func(ogr_geom, *args, **kwargs)
-
-    return wrapper
-
-
-def _file_io_decorator(func):
+def _file_io(mode='r'):
     """
     Decorator which checks whether parsed file arguments are acutual IO-Classes
     such as NcFile or GeoTiffFile. If string is parsed as file, then
     a corresponding IO-Class object is parsed into the original function
     """
-    supported_io_classes = (GeoTiffFile, NcFile)
-    tiff_ext = ('.tiff', '.tif', '.geotiff')
-    netcdf_ext = ('.nc', '.netcdf', '.ncdf')
+    def _inner_file_io(func):
+        tiff_ext = ('.tiff', '.tif', '.geotiff')
+        netcdf_ext = ('.nc', '.netcdf', '.ncdf')
 
-    def wrapper(self, *args, **kwargs):
-        file = args[1]
-        if not isinstance(file, supported_io_classes):
-            if file is None:
-                # None => wraps write() => args[0] = self, get_orig_io
-                file = args[0]._get_orig_io()
-                pass
-            else:
-                # file is probably string
-                format = os.path.splitext(file)[1].lower()
-                if format in tiff_ext:
+        def wrapper(self, *args, **kwargs):
+            io_kwarg = kwargs.get('io', None)
+            io_kwargs = kwargs.get('io_kwargs', None)
+            io_arg = args[0]
+
+            io = None
+            if isinstance(io_arg, str):
+                file_ext = os.path.splitext(io_arg)[1].lower()
+                if file_ext in tiff_ext:
                     io_class = GeoTiffFile
-                elif format in netcdf_ext:
+                elif file_ext in netcdf_ext:
                     io_class = NcFile
+                elif io_kwarg is not None:
+                    io_class = io_kwarg
                 else:
                     raise IOError('File format not supported.')
-                if not isinstance(args[0], RasterData):
-                    # wraps from_file()
-                    io_class_kwargs = kwargs if kwargs is not None else {}
-                    file = io_class(file, **io_class_kwargs)
+            else:
+                io_class = None
+                io = io_arg  # argument seems to be a self defined io class
+
+            create_io = False
+            if hasattr(self, 'io'):
+                if self.io is None:
+                    if io is None:
+                        create_io = True
                 else:
-                    # wraps write() with given file
-                    touch(file)  # make sure file exists
-                    file = io_class(file,
-                                    mode='w',
-                                    count=1,
-                                    geotransform=args[0].geometry.gt,
-                                    spatialref=args[0].geometry.wkt)
+                    if self.io.mode != mode:
+                        create_io = True
+                io = self.io if self.io is not None else io
+            else:
+                create_io = True
 
-        return func(args[0], file)
+            if create_io:
+                io_kwargs = dict() if io_kwargs is None else io_kwargs
+                geotransform = io_kwargs.get('geotransform', self.geometry.gt)
+                spatialref = io_kwargs.get('spatialref', self.geometry.wkt)
+                add_kwargs = {'geotransform': geotransform,
+                              'spatialref': spatialref}
+                io_kwargs.update(add_kwargs)
+                io = io_class(filename=io_arg, mode=mode, **io_kwargs)
 
-    return wrapper
+            return func(self, io, **kwargs)
+        return wrapper
+    return _inner_file_io
 
 
 def _stack_io(mode='r'):
@@ -91,39 +87,36 @@ def _stack_io(mode='r'):
         such as NcFile or GeoTiffFile. If string is parsed as file, then
         a corresponding IO-Class object is parsed into the original function
         """
-        tiff_ext = ('.tiff', '.tif', '.geotiff')
-        netcdf_ext = ('.nc', '.netcdf', '.ncdf')
 
         def wrapper(self, *args, **kwargs):
-            ds = kwargs.get('ds', None)
-            ref_filepath = self.rds[0].filepath
-            format = os.path.splitext(ref_filepath)[1].lower()
-            if format in tiff_ext:
+            io = kwargs.get('io', None)
+            ref_io_class = self.rds[0].io
+            if isinstance(ref_io_class, GeoTiffFile):
                 io_class = GeoTiffRasterTimeStack
-            elif format in netcdf_ext:
+            elif isinstance(ref_io_class, NcFile):
                 io_class = NcRasterTimeStack
             else:
-                raise IOError('File format not supported.')
+                raise IOError('IO class not supported.')
 
-            create_ds = False
-            if self._ds is None:
-                if ds is not None:
-                    self._ds = ds
+            create_io = False
+            if self.io is None:
+                if io is not None:
+                    self.io = io
                 else:
-                    create_ds = True
+                    create_io = True
             else:
-                if self._ds.mode != mode:
-                    create_ds = True
+                if self.io.mode != mode:
+                    create_io = True
 
-            if create_ds:
-                filepaths = [rd.filepath for rd in self.rds]
+            if create_io:
+                filepaths = [rd.io.filename for rd in self.rds]
                 df = pd.DataFrame({'filenames': filepaths})
                 geotransform = kwargs.get('geotransform', self.geometry.gt)
                 spatialref = kwargs.get('spatialref', self.geometry.wkt)
                 add_kwargs = {'geotransform': geotransform,
                               'spatialref': spatialref}
                 kwargs.update(add_kwargs)
-                self._ds = io_class(file_ts=df, mode=mode, **kwargs)
+                self.io = io_class(file_ts=df, mode=mode, **kwargs)
 
             return func(self, *args, **kwargs)
 
@@ -260,7 +253,6 @@ class RasterData(object):
         self.data = data
         self.parent = parent
         self.io = io
-        #self.filename = self.io.filename if io is not None else None
 
     @classmethod
     def from_array(cls, sref, gt, data, parent=None):
@@ -288,8 +280,8 @@ class RasterData(object):
         return cls(rows, cols, sref, gt, data, parent=parent)
 
     @classmethod
-    @_file_io_decorator
-    def from_file(cls, file, read=False, io_kwargs=None):
+    @_file_io(mode=None)
+    def from_file(cls, io, read=False, io_kwargs=None):
         """
         Creates a RasterData object from a file
 
@@ -306,11 +298,17 @@ class RasterData(object):
         RasterData
 
         """
-        sref = SpatialRef(file.spatialref)
-        geotransform = file.geotransform
-        data = file.read(return_tags=False) if read else None
-        rows, cols = file.shape
-        return cls(rows, cols, sref, geotransform, data=data, io=file)
+        spatialref = io_kwargs.get('spatialref', None)
+        geotransform = io_kwargs.get('geotransform', None)
+        if spatialref is None or geotransform is None:
+            io._open('r')
+            spatialref = io.spatialref
+            geotransform = io.spatialref
+
+        sref = SpatialRef(spatialref)
+        data = io.read(return_tags=False) if read else None
+        rows, cols = data.shape
+        return cls(rows, cols, sref, geotransform, data=data, io=io)
 
     def crop(self, geometry, inplace=True):
         """
@@ -332,27 +330,29 @@ class RasterData(object):
             Depending on inplace argument
 
         """
-        nodata = -9999  # ? set / externalize ?
+        # create new geometry
         new_geom = self.geometry & geometry
-        new_data = np.full((new_geom.rows, new_geom.cols), nodata)
-        for r in range(new_geom.rows):
-            for c in range(new_geom.cols):
-                x, y = new_geom.rc2xy(r, c, center=True)
-                if (x, y) in self.geometry:
-                    orig_r, orig_c = self.geometry.xy2rc(x, y)
-                    new_data[r][c] = self.data[orig_r][orig_c]
+
+        # create new data
+        data = None
+        if self.__check_data():
+            min_col, max_row, max_col, min_row = new_geom.get_rel_extent(self.geometry, unit="px")
+            data = self.data[min_row:(max_row + 1), min_col:(max_col + 1)]
+            mask = rasterise_polygon(new_geom.geometry)
+            data = np.ma.array(data, mask=mask)
 
         if inplace:
             self.geometry = new_geom
-            self.data = new_data
             self.parent = self
+            self.data = data
         else:
             return RasterData.from_array(self.geometry.sref,
                                          new_geom.gt,
-                                         new_data,
+                                         data,
                                          parent=self)
 
-    def load(self):
+    @_file_io('r')
+    def load(self, io):
         """
         Reads the data from disk and assigns the resulting array to the
         self.data attribute
@@ -365,7 +365,7 @@ class RasterData(object):
         sub_rect = (g.ll_x, g.ll_y, g.width, g.height)
         self.data = self.io.read(sub_rect=sub_rect)
 
-    @file_io_decorator
+    @_file_io
     def write(self, file=None):
         """
         Writes data to on hard-drive into target file or into file associated
@@ -454,6 +454,15 @@ class RasterData(object):
 
         return fig
 
+    def __check_data(self):
+        if self.data is not None:
+            n = len(self.data.shape)
+            if n != 2:
+                raise Exception('Data has {} dimensions, but 2 dimensions are required.'.format(n))
+            return True
+        else:
+            return False
+
 
 class RasterStack(object):
     def __init__(self, raster_datas, data=None, geometry=None, parent=None, io=None):
@@ -461,7 +470,6 @@ class RasterStack(object):
         self.data = data
         self.io = io
         self.parent = parent
-        self._ds = None
 
         self.geometry = geometry
         if self.geometry is None:
@@ -473,8 +481,16 @@ class RasterStack(object):
         pass
 
     @classmethod
-    def from_array(cls, filepaths, label, **kwargs):
-        pass
+    def from_array(cls, data, sref, gt, labels=None, parent=None, **kwargs):
+
+        (n, rows, cols) = data.shape
+        raster_data = RasterData(rows, cols, sref, gt)
+        raster_datas = [copy.deepcopy(raster_data) for _ in range(n)]
+        if labels is None:
+            labels = list(range(n))
+        ds = pd.Series(raster_datas, index=labels)
+
+        return cls(ds, data=data, geometry=raster_data.geometry, parent=parent, **kwargs)
 
     @classmethod
     def from_others(cls, others, dtype=None, geometry=None, **kwargs):
@@ -543,7 +559,7 @@ class RasterStack(object):
             else:
                 raise Exception('Please specify data to write.')
 
-        self._ds.write(data, **kwargs)
+        self.io.write(data, **kwargs)
 
     @_any_geom2ogr_geom
     def load_by_geom(self, geom, **kwargs):
@@ -564,7 +580,7 @@ class RasterStack(object):
         min_col = col
         min_row = row
         max_col = col + col_size
-        max_row =  row + row_size
+        max_row = row + row_size
         pixel_polygon = Polygon(((0, 0), (self.geometry.cols, 0), (self.geometry.cols, self.geometry.rows),
                                  (0, self.geometry.rows), (0, 0)))
         ll_point = Point((min_col, max_row))
@@ -599,7 +615,7 @@ class RasterStack(object):
                 self.data = data
                 return self
             else:
-                return RasterStack.from_data(data=data)
+                return RasterStack.from_array(data, self.geometry.sref, self.geometry.gt, labels=self.raster_datas.index)
         else:
             return None
 
@@ -685,7 +701,7 @@ class RasterMosaic(object):
                 if isinstance(elem, RasterData):
                     rd = elem
                 elif isinstance(elem, str) and os.path.exists(elem):
-                    rd = RasterData.from_file(elem)
+                    rd = RasterData.from_file(elem, mode=None)
                 else:
                     raise Exception("")
 
