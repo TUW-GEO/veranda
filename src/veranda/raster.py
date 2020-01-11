@@ -561,7 +561,7 @@ class RasterStack(object):
 
         self.io.write(data, **kwargs)
 
-    @_any_geom2ogr_geom
+    @any_geom2ogr_geom
     def load_by_geom(self, geom, **kwargs):
         raster_stack = self.crop(geom, inplace=False)
         min_col, _, _, min_row = raster_stack.geometry.get_rel_extent(self.geometry, unit='px')
@@ -703,7 +703,7 @@ class RasterMosaic(object):
                 elif isinstance(elem, str) and os.path.exists(elem):
                     rd = RasterData.from_file(elem, mode=None)
                 else:
-                    raise Exception("")
+                    raise Exception("Data type '{}' is not understood.".format(type()))
 
                 structure['raster_data'].append(rd)
                 if rd.geometry.id is not None:
@@ -734,7 +734,7 @@ class RasterMosaic(object):
 
         return pd.Series(raster_stacks, index=spatial_ids)
 
-    @_any_geom2ogr_geom
+    @any_geom2ogr_geom
     def read_by_geom(self, geom, osr_sref=None, band=1, dtype='numpy', **kwargs):
         raster_grid = self.grid.crop(geom)
         geometry = self.geometry.crop(geom)
