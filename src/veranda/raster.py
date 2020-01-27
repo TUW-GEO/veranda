@@ -1,9 +1,12 @@
 import os
+import sys
 import copy
+import inspect
 import pandas as pd
 import numpy as np
 import xarray as xr
 import matplotlib.pyplot as plt
+from matplotlib import cm
 from shapely.geometry import Polygon
 from shapely.geometry import Point
 
@@ -19,16 +22,18 @@ from geospade.definition import RasterGeometry
 from geospade.definition import RasterGrid
 from geospade.spatial_ref import SpatialRef
 from geospade.operation import rasterise_polygon
-from geospade.operation import any_geom2ogr_geom
+from geospade.operation import _any_geom2ogr_geom
 from geospade.operation import xy2ij
 from geospade.operation import ij2xy
+from geospade.operation import get_rel_extent
 
 
 def _file_io(mode='r'):
     """
-    Decorator which checks whether parsed file arguments are acutual IO-Classes
-    such as NcFile or GeoTiffFile. If string is parsed as file, then
-    a corresponding IO-Class object is parsed into the original function
+    Decorator which checks whether parsed file arguments are actual IO classes (e.g., `NcFile`, `GeoTiffFile`, ...)
+    or strings. If a string/filename is given, then a corresponding IO class is initiated with the filename.
+
+    mode : str, optional
     """
     def _inner_file_io(func):
         tiff_ext = ('.tiff', '.tif', '.geotiff')
@@ -36,46 +41,49 @@ def _file_io(mode='r'):
 
         def wrapper(self, *args, **kwargs):
             io_kwarg = kwargs.get('io', None)
-            io_kwargs = kwargs.get('io_kwargs', None)
-            io_arg = args[0]
+            io_class_kwarg = kwargs.get('io_class', None)
+            io_class_kwargs = kwargs.get('io_kwargs', None)
+            if args is None:
+                arg = io_kwarg
+            else:
+                arg = args[0]
+                if len(args) > 1:
+                    args = args[1:]
+                else:
+                    args = tuple()
 
-            io = None
-            if isinstance(io_arg, str):
-                file_ext = os.path.splitext(io_arg)[1].lower()
-                if file_ext in tiff_ext:
+            if isinstance(arg, str):  # argument seems to be a filename
+                io = None
+                file_ext = os.path.splitext(arg)[1].lower()
+                if io_class_kwarg is not None:
+                    io_class = io_class_kwarg
+                elif file_ext in tiff_ext:
                     io_class = GeoTiffFile
                 elif file_ext in netcdf_ext:
                     io_class = NcFile
-                elif io_kwarg is not None:
-                    io_class = io_kwarg
                 else:
                     raise IOError('File format not supported.')
-            else:
+            else:  # argument seems to be a self defined io class
                 io_class = None
-                io = io_arg  # argument seems to be a self defined io class
+                io = arg
 
-            create_io = False
-            if hasattr(self, 'io'):
-                if self.io is None:
-                    if io is None:
-                        create_io = True
-                else:
-                    if self.io.mode != mode:
-                        create_io = True
-                io = self.io if self.io is not None else io
+            io_class_kwargs = dict() if io_class_kwargs is None else io_class_kwargs
+            geotransform = io_class_kwargs.get('geotransform', self.geometry.gt if hasattr(self, "geometry") else None)
+            spatialref = io_class_kwargs.get('spatialref', self.geometry.sref.wkt if hasattr(self, "geometry") else None)
+            add_kwargs = {'geotransform': geotransform,
+                          'spatialref': spatialref}
+            io_class_kwargs.update(add_kwargs)
+
+            if self.io is not None:
+                return func(self, self.io, *args, **kwargs)
+            elif io is not None:
+                self.io = io
+                return func(self, io, *args, **kwargs)
             else:
-                create_io = True
+                io = io_class(arg, mode=mode, **io_class_kwargs)
+                self.io = io
+                return func(self, io, *args, **kwargs)
 
-            if create_io:
-                io_kwargs = dict() if io_kwargs is None else io_kwargs
-                geotransform = io_kwargs.get('geotransform', self.geometry.gt)
-                spatialref = io_kwargs.get('spatialref', self.geometry.wkt)
-                add_kwargs = {'geotransform': geotransform,
-                              'spatialref': spatialref}
-                io_kwargs.update(add_kwargs)
-                io = io_class(filename=io_arg, mode=mode, **io_kwargs)
-
-            return func(self, io, **kwargs)
         return wrapper
     return _inner_file_io
 
@@ -204,204 +212,217 @@ def convert_dtype(data, dtype, xs=None, ys=None, zs=None, band=1, x_dim='x', y_d
 
 class RasterData(object):
     """
-    This class represents georeferenced raster data. Two main components of this
-    data structure is geometry and actual data. The geometry of the raster data,
-    defines all geometrical properties of the data like extent, pixel size,
-    location and orientation in a spatial reference system. The geometry is a
-    RasterGeometry object which implements several geometrical operations.
-    The other component is data, which is a simple numpy ndarray, that contains
-    the actual values of the raster file. Every RasterData has its own instance
-    of some IO-Class such as GeoTiffFile or NcFile which is used for IO
-    operations. The advantage of this class is, that we can perform geometrical
-    operations without even having to load the pixel values from hard-drive, and
-    then later load only data we need.
+    This class represents geo-referenced raster data. Its two main components are a geometry and data.
+    The geometry defines all spatial properties of the data like extent, pixel size,
+    location and orientation in a spatial reference system (class `RasterGeometry`).
+    The other component is data, which is a 2D array-like object that contains the actual values of the raster file.
+    Every `RasterData` object has stores an instance of some IO class (e.g., `GeoTiffFile`, `NcFile`), which is used for
+    IO operations.
     """
 
     def __init__(self, rows, cols, sref, gt,
-                 data=None, parent=None, io=None):
+                 data=None, io=None, parent=None):
         """
-        Basic constructor
+        Basic constructor of class `RasterData`.
 
         Parameters
         ----------
         rows : int
-            number of pixel rows
+            Number of pixel rows.
         cols : int
-            number pixel columns
-        sref: pyraster.spatial_ref.SpatialRef
-            spatial reference of the data
-        gt : 6-tuple
-            GDAL Geotransform 'matrix'
-        data : array-like (optional)
-            Image pixel values (data)
-        parent : RasterData ,optional (default: None)
-            This attribute is used to trace back to the actual file for the
-            io operations. For example by cropping existing RasterData object,
-            that was created from existing file, a new RasterData object is
-            created with parent set to the RasterData object we are cropping.
-            This way we can access the file, that contains data in our
-            particular region of interest, without having to load the complete
-            file into memory only to discard most of it later. If parent is
-            None, then this object is associated with the file that contains the
-            data.
-        io : pyraster.geotiff.GeoTiffFile or pyraster.netcdf.NcFile
-            Instance of a IO Class that is associated with a file that contains
-            the data.
-
+            Number of pixel columns.
+        sref : geospade.spatial_ref.SpatialRef or osr.SpatialReference
+            Instance representing the spatial reference of the geometry.
+        gt : 6-tuple, optional
+            GDAL geotransform tuple.
+        data : numpy.ndarray or xarray.DataArray, optional
+            2D array-like object containing image pixel values.
+        io : pyraster.io.geotiff.GeoTiffFile or pyraster.io.netcdf.NcFile, optional
+            Instance of a IO Class that is associated with a file that contains the data.
+        parent : geospade.definition.RasterGeometry, optional
+            Parent `RasterGeometry` instance.
         """
-        self.geometry = RasterGeometry(rows, cols, sref, gt)
+
+        self.geometry = RasterGeometry(rows, cols, sref, gt, parent=parent)
+        self.__check_data(data)
         self.data = data
-        self.parent = parent
         self.io = io
 
     @classmethod
-    def from_array(cls, sref, gt, data, parent=None):
+    def from_array(cls, sref, gt, data, **kwargs):
         """
-        Creates a RasterData object from an array-like object.
+        Creates a `RasterData` object from a 2D array-like object.
 
         Parameters
         ----------
-        sref : pyraster.spatial_ref.SpatialRef
-            Spatial reference of the data geometry
-        gt : 6-tuple
-            GDAL geotransform 'matrix'
-        data : array-like
-            pixel values
-        parent : RasterData or None, optional
-            parent RasterData object
-
+        sref : geospade.spatial_ref.SpatialRef or osr.SpatialReference
+            Instance representing the spatial reference of the geometry.
+        gt : 6-tuple, optional
+            GDAL geotransform tuple.
+        data : numpy.ndarray or xarray.DataArray, optional
+            2D array-like object containing image pixel values.
+        parent : geospade.definition.RasterGeometry, optional
+            Parent `RasterGeometry` instance.
 
         Returns
         -------
         RasterData
-
         """
-        rows, cols = data.shape
-        return cls(rows, cols, sref, gt, data, parent=parent)
+
+        RasterData.__check_data(data)
+
+        if isinstance(data, np.ndarray):
+            shape = data.shape
+
+        rows, cols = shape
+        return cls(rows, cols, sref, gt, data, **kwargs)
 
     @classmethod
-    @_file_io(mode=None)
-    def from_file(cls, io, read=False, io_kwargs=None):
+    @_file_io(mode='r')
+    def from_file(cls, io, read_kwargs=None, io_kwargs=None):
         """
-        Creates a RasterData object from a file
+        Creates a `RasterData` object from a file.
 
         Parameters
         ----------
-        file : string or GeoTiffFile or NcFile
-            path to the file or IO Classes instance. The decorator deals with
-            the distinction
-        io_kwargs: dict
-            potential arguments for IO Class instance. (Happens in decorator)
+        io : string or GeoTiffFile or NcFile
+            Filepath to the file or IO class instance. The decorator deals with
+            the distinction.
+        read_kwargs : dict, optional
+            Keyword arguments for reading function of IO class.
+        io_kwargs: dict, optional
+            Potential arguments for IO class initialisation (is applied in decorator).
 
         Returns
         -------
         RasterData
-
         """
+
+        read_kwargs = read_kwargs if read_kwargs is not None else {}
+
         spatialref = io_kwargs.get('spatialref', None)
         geotransform = io_kwargs.get('geotransform', None)
         if spatialref is None or geotransform is None:
-            io._open('r')
             spatialref = io.spatialref
-            geotransform = io.spatialref
+            geotransform = io.geotransform
 
         sref = SpatialRef(spatialref)
-        data = io.read(return_tags=False) if read else None
+        data = io.read(**read_kwargs) if read_kwargs else None
+        RasterData.__check_data(data)
         rows, cols = data.shape
         return cls(rows, cols, sref, geotransform, data=data, io=io)
 
+    @_any_geom2ogr_geom
     def crop(self, geometry, inplace=True):
         """
-        Crops the image by geometry. Inplace determines, whether a new object
+        Crops the image by a geometry. Inplace determines, whether a new object
         is returned or the cropping happens on this current object.
-        The resulting RasterData object contains no-data value in pixels that
-        are not contained in the original RasterData object
 
         Parameters
         ----------
-        geometry : RasterGeometry or shapely geometry
-            geometry to which current RasterData should be cropped
-        inplace : bool
-            if true, current object gets modified, else new object is returned
+        geometry : geospade.definition.RasterGeometry or ogr.Geometry or shapely.geometry or list or tuple
+            Other geometry used for cropping the data.
+        inplace : bool, optional
+            If true, the current instance will be modified.
+            If false, a new `RasterData` instance will be created.
 
         Returns
         -------
         RasterData or None
-            Depending on inplace argument
-
+            `RasterData` object only containing data within the intersection.
+            If the `RasterData` and the given geometry do not intersect, None is returned.
         """
+
         # create new geometry
         new_geom = self.geometry & geometry
 
         # create new data
-        data = None
-        if self.__check_data():
-            min_col, max_row, max_col, min_row = new_geom.get_rel_extent(self.geometry, unit="px")
+        if self.__check_data(self.data):
+            min_col, max_row, max_col, min_row = get_rel_extent(self.geometry, unit="px")
             data = self.data[min_row:(max_row + 1), min_col:(max_col + 1)]
             mask = rasterise_polygon(new_geom.geometry)
             data = np.ma.array(data, mask=mask)
+        else:
+            data = None
 
         if inplace:
             self.geometry = new_geom
-            self.parent = self
             self.data = data
         else:
-            return RasterData.from_array(self.geometry.sref,
-                                         new_geom.gt,
-                                         data,
-                                         parent=self)
+            return RasterData.from_array(self.geometry.sref, new_geom.gt, data, io=self.io, parent=self.geometry)
 
+    # TODO: define/discuss IO function names
     @_file_io('r')
-    def load(self, io):
+    def load(self, io=None, read_kwargs=None):
         """
-        Reads the data from disk and assigns the resulting array to the
-        self.data attribute
-        Returns
-        -------
-        None
-        """
-        self.io = self._get_orig_io()
-        g = self.geometry
-        sub_rect = (g.ll_x, g.ll_y, g.width, g.height)
-        self.data = self.io.read(sub_rect=sub_rect)
+        Reads data from disk and assigns the resulting array to the
+        `self.data` attribute.
 
-    @_file_io
-    def write(self, file=None):
+        Parameters
+        ----------
+        io : string or GeoTiffFile or NcFile
+            Filepath to the file or IO class instance. The decorator deals with
+            the distinction.
+        read_kwargs : dict, optional
+            Keyword arguments for reading function of IO class.
         """
-        Writes data to on hard-drive into target file or into file associated
+
+        read_kwargs = read_kwargs if read_kwargs is not None else {}
+        self.data = io.read(**read_kwargs)
+
+    @_file_io('w')
+    def write(self, io=None, write_kwargs=None):
+        """
+        Writes data to disk into target file or into file associated
         with this object.
 
         Parameters
         ----------
-        file: IO-Class or string
-            either initialized instance of one of the IO Classes (GeoTiffFile,
-            NcFile ..) or string representing path to the file on filesystem
+        io : string or GeoTiffFile or NcFile
+            Filepath to the file or IO class instance. The decorator deals with
+            the distinction.
+        write_kwargs : dict, optional
+            Keyword arguments for writing function of IO class.
+        """
+
+        write_kwargs = write_kwargs if write_kwargs is not None else {}
+        io.write(self.encode(self.data), **write_kwargs)
+
+    def encode(self, data):
+        """
+        Encodes data.
+
+        Parameters
+        ----------
+        data : numpy.ndarray or xarray.DataArray, optional
+            2D array-like object containing image pixel values.
 
         Returns
         -------
-        None
+        data : numpy.ndarray or xarray.DataArray, optional
+            Encoded array.
         """
-        # nodata ??? set / externalize ???
-        file.write(self.data, band=1)
 
-    def _get_orig_io(self):
+        return data
+
+    def decode(self, data):
         """
-        Follows the parent links to until it reaches a RasterData object with
-        valid io attribute
+        Decodes data.
+
+        Parameters
+        ----------
+        data : numpy.ndarray or xarray.DataArray, optional
+            2D array-like object containing image pixel values.
+
         Returns
         -------
-        IO Class
-            instance of an IO Class of an RasterData object that is associated
-            with an file
-
+        data : numpy.ndarray or xarray.DataArray, optional
+            Decoded array.
         """
-        parent = self.parent
-        while parent.io is None:
-            parent = parent.parent
-        return parent.io
 
-    def plot(self, fig=None, map_crs=None, extent=None, extent_crs=None,
-             cmap='viridis'):
+        return data
+
+    def plot(self, ax=None, proj=None, extent=None, extent_proj=None, cmap='viridis'):
         """
         Plots the raster data to a map that uses map_crs projection
         if provided. When not, the map projection defaults to spatial reference
@@ -426,46 +447,84 @@ class RasterData(object):
             Colormap which is to be used to plot the data
         """
 
-        data_crs = self.geometry.to_cartopy_crs()
-
-        if map_crs is None:
-            map_crs = data_crs
-        if fig is None or len(fig.get_axes()) == 0:
-            fig = plt.figure()
-            ax = fig.add_subplot(111, projection=map_crs)
+        if 'matplotlib' in sys.modules:
+            import matplotlib.pyplot as plt
         else:
-            ax = fig.gca()
+            err_msg = "Module 'matplotlib' is mandatory for plotting a RasterGeometry object."
+            raise ImportError(err_msg)
 
-        if extent_crs is None:
-            extent_crs = data_crs
+        if proj is None:
+            proj = self.geometry.to_cartopy_crs()
+
+        if extent_proj is None:
+            extent_proj = proj
+
+        if ax is None:
+            fig = plt.figure()
+            ax = fig.add_subplot(111, projection=proj)
+
         if extent is None:
-            ll_x, ll_y, ur_x, ur_y = self.geometry.geometry.bounds
+            ll_x, ll_y, ur_x, ur_y = self.geometry.extent
             extent = ll_x, ur_x, ll_y, ur_y
 
         if isinstance(cmap, str):
             cmap = cm.get_cmap(cmap)
 
-        ax.set_extent(extent, crs=extent_crs)
+        ax.set_extent(extent, crs=extent_proj)
         ax.coastlines()
 
-        ax.imshow(self.data, extent=extent, origin='upper', transform=data_crs,
-                  cmap=cmap)
+        ax.imshow(self.data, extent=extent, origin='upper', transform=proj, cmap=cmap)
         ax.set_aspect('equal', 'box')
 
-        return fig
+        return ax
 
-    def __check_data(self):
-        if self.data is not None:
-            n = len(self.data.shape)
+    @staticmethod
+    def __check_data(data):
+        """
+        Checks array type and structure of data.
+
+        Parameters
+        ----------
+        data : numpy.ndarray or xarray.DataArray, optional
+            2D array-like object containing image pixel values.
+
+        Returns
+        -------
+        bool
+            If true, the given data fulfills all requirements for a `RasterData` object.
+        """
+
+        if data is not None:
+            if isinstance(data, np.ndarray):
+                shape = data.shape
+            else:
+                err_msg = "Data type {} is not supported as an array."
+                raise Exception(err_msg.format(err_msg))
+
+            n = len(shape)
             if n != 2:
-                raise Exception('Data has {} dimensions, but 2 dimensions are required.'.format(n))
+                err_msg = "Data has {} dimensions, but 2 dimensions are required."
+                raise Exception(err_msg.format(n))
             return True
         else:
             return False
 
 
 class RasterStack(object):
+    """
+    Class representing a collection of `RasterData` objects. A raster stack can be described as a stack of
+    geospatial files covering a certain extent in space, given by a geometry object.
+    """
     def __init__(self, raster_datas, data=None, geometry=None, parent=None, io=None):
+        """
+        Constructor of class `RasterStack`.
+
+        Parameters
+        ----------
+
+        Returns
+        -------
+        """
         self.raster_datas = raster_datas
         self.data = data
         self.io = io
