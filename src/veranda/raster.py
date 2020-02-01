@@ -27,14 +27,18 @@ from geospade.operation import xy2ij
 from geospade.operation import ij2xy
 from geospade.operation import get_rel_extent
 
-
+# TODO: can we represent a rotated array with xarray?
 def _file_io(mode='r'):
     """
     Decorator which checks whether parsed file arguments are actual IO classes (e.g., `NcFile`, `GeoTiffFile`, ...)
     or strings. If a string/filename is given, then a corresponding IO class is initiated with the filename.
 
     mode : str, optional
+        File opening mode:
+            - 'r': read operation (default).
+            - 'w': write operation (default).
     """
+
     def _inner_file_io(func):
         tiff_ext = ('.tiff', '.tif', '.geotiff')
         netcdf_ext = ('.nc', '.netcdf', '.ncdf')
@@ -45,12 +49,10 @@ def _file_io(mode='r'):
             io_class_kwargs = kwargs.get('io_kwargs', None)
             if args is None:
                 arg = io_kwarg
+                args = tuple()
             else:
-                arg = args[0]
-                if len(args) > 1:
-                    args = args[1:]
-                else:
-                    args = tuple()
+                arg = args[0]  # get first argument
+                args = args[1:]  # remove first argument
 
             if isinstance(arg, str):  # argument seems to be a filename
                 io = None
@@ -131,8 +133,8 @@ def _stack_io(mode='r'):
         return wrapper
     return _inner_stack_io
 
-
-def convert_dtype(data, dtype, xs=None, ys=None, zs=None, band=1, x_dim='x', y_dim='y', z_dim='time'):
+# TODO: where should we put this?
+def convert_data(data, data_type, xs=None, ys=None, zs=None, band=1, x_dim='x', y_dim='y', z_dim='time'):
     """
     Converts `data` into an array-like object defined by `dtype`. It supports NumPy arrays, Xarray arrays and
     Pandas data frames.
@@ -160,7 +162,7 @@ def convert_dtype(data, dtype, xs=None, ys=None, zs=None, band=1, x_dim='x', y_d
         Data as an array-like object.
     """
 
-    if dtype == "xarray":
+    if data_type == "xarray":
         if isinstance(data, list) and isinstance(data[0], np.ndarray):
             ds = []
             for i, entry in enumerate(data):
@@ -183,9 +185,9 @@ def convert_dtype(data, dtype, xs=None, ys=None, zs=None, band=1, x_dim='x', y_d
         elif isinstance(data, xr.Dataset):
             converted_data = data
         else:
-            raise DataTypeMismatch(type(data), dtype)
+            raise DataTypeMismatch(type(data), data_type)
 
-    elif dtype == "numpy":
+    elif data_type == "numpy":
         if isinstance(data, list) and isinstance(data[0], np.ndarray):
             if len(data) == 1:
                 converted_data = data[0]
@@ -200,17 +202,17 @@ def convert_dtype(data, dtype, xs=None, ys=None, zs=None, band=1, x_dim='x', y_d
         elif isinstance(data, np.ndarray):
             converted_data = data
         else:
-            raise DataTypeMismatch(type(data), dtype)
-    elif dtype == "dataframe":
-        xr_ds = convert_dtype(data, 'xarray', xs=xs, ys=ys, zs=zs, band=band, x_dim=x_dim, y_dim=y_dim, z_dim=z_dim)
+            raise DataTypeMismatch(type(data), data_type)
+    elif data_type == "dataframe":
+        xr_ds = convert_data(data, 'xarray', xs=xs, ys=ys, zs=zs, band=band, x_dim=x_dim, y_dim=y_dim, z_dim=z_dim)
         converted_data = xr_ds.to_dataframe()
     else:
-        raise DataTypeMismatch(type(data), dtype)
+        raise DataTypeMismatch(type(data), data_type)
 
     return converted_data
 
 
-class RasterData(object):
+class RasterData:
     """
     This class represents geo-referenced raster data. Its two main components are a geometry and data.
     The geometry defines all spatial properties of the data like extent, pixel size,
@@ -220,8 +222,7 @@ class RasterData(object):
     IO operations.
     """
 
-    def __init__(self, rows, cols, sref, gt,
-                 data=None, io=None, parent=None):
+    def __init__(self, rows, cols, sref, gt, data=None, data_type="numpy", io=None, label=None, parent=None):
         """
         Basic constructor of class `RasterData`.
 
@@ -237,6 +238,7 @@ class RasterData(object):
             GDAL geotransform tuple.
         data : numpy.ndarray or xarray.DataArray, optional
             2D array-like object containing image pixel values.
+        data_type :
         io : pyraster.io.geotiff.GeoTiffFile or pyraster.io.netcdf.NcFile, optional
             Instance of a IO Class that is associated with a file that contains the data.
         parent : geospade.definition.RasterGeometry, optional
@@ -244,9 +246,20 @@ class RasterData(object):
         """
 
         self.geometry = RasterGeometry(rows, cols, sref, gt, parent=parent)
-        self.__check_data(data)
-        self.data = data
+        data = convert_data(data, "numpy")
+        self._data = data
+        self.data_type = data_type
         self.io = io
+        self.label = label
+
+    # TODO: add if statement for checking data type?
+    @property
+    def data(self):
+        """ array-like : Retrieves array in the requested data format. """
+        xs = self.geometry.x_coords
+        ys = self.geometry.y_coords
+        zs = None
+        return convert_data(self._data, self.data_type, xs=xs, ys=ys, zs=zs, band=self.label)
 
     @classmethod
     def from_array(cls, sref, gt, data, **kwargs):
@@ -269,12 +282,8 @@ class RasterData(object):
         RasterData
         """
 
-        RasterData.__check_data(data)
-
-        if isinstance(data, np.ndarray):
-            shape = data.shape
-
-        rows, cols = shape
+        data = convert_data(data, "numpy")
+        rows, cols = data.shape
         return cls(rows, cols, sref, gt, data, **kwargs)
 
     @classmethod
@@ -347,7 +356,7 @@ class RasterData(object):
 
         if inplace:
             self.geometry = new_geom
-            self.data = data
+            self._data = data
         else:
             return RasterData.from_array(self.geometry.sref, new_geom.gt, data, io=self.io, parent=self.geometry)
 
@@ -368,7 +377,19 @@ class RasterData(object):
         """
 
         read_kwargs = read_kwargs if read_kwargs is not None else {}
-        self.data = io.read(**read_kwargs)
+        self._data = io.read(**read_kwargs)
+
+    def read_by_coords(self, x, y, sref=None, data_type=None):
+        """
+        .
+
+        """
+
+    def read_by_geom(self, geom, data_type=None):
+        pass
+
+    def read_by_pixel(self, row, col, data_type=None):
+        pass
 
     @_file_io('w')
     def write(self, io=None, write_kwargs=None):
@@ -386,7 +407,7 @@ class RasterData(object):
         """
 
         write_kwargs = write_kwargs if write_kwargs is not None else {}
-        io.write(self.encode(self.data), **write_kwargs)
+        io.write(self.encode(self._data), **write_kwargs)
 
     def encode(self, data):
         """
@@ -473,7 +494,7 @@ class RasterData(object):
         ax.set_extent(extent, crs=extent_proj)
         ax.coastlines()
 
-        ax.imshow(self.data, extent=extent, origin='upper', transform=proj, cmap=cmap)
+        ax.imshow(self._data, extent=extent, origin='upper', transform=proj, cmap=cmap)
         ax.set_aspect('equal', 'box')
 
         return ax
@@ -485,7 +506,7 @@ class RasterData(object):
 
         Parameters
         ----------
-        data : numpy.ndarray or xarray.DataArray, optional
+        data : numpy.ndarray
             2D array-like object containing image pixel values.
 
         Returns
@@ -495,13 +516,7 @@ class RasterData(object):
         """
 
         if data is not None:
-            if isinstance(data, np.ndarray):
-                shape = data.shape
-            else:
-                err_msg = "Data type {} is not supported as an array."
-                raise Exception(err_msg.format(err_msg))
-
-            n = len(shape)
+            n = len(data.shape)
             if n != 2:
                 err_msg = "Data has {} dimensions, but 2 dimensions are required."
                 raise Exception(err_msg.format(n))
