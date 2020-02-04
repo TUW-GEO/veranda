@@ -176,38 +176,50 @@ class NcFile(object):
             if self.spatialref is not None:
                 spref = osr.SpatialReference()
                 spref.ImportFromWkt(self.spatialref)
+                proj = spref.GetAttrValue('PROJECTION')
 
-                proj4_dict = {}
-                for subset in spref.ExportToProj4().split(' '):
-                    x = subset.split('=')
-                    if len(x) == 2:
-                        proj4_dict[x[0]] = x[1]
+                if proj is not None:
+                    self.gmn = proj.lower()
+                    proj4_dict = {}
+                    for subset in spref.ExportToProj4().split(' '):
+                        x = subset.split('=')
+                        if len(x) == 2:
+                            proj4_dict[x[0]] = x[1]
 
-                self.gmn = spref.GetAttrValue('PROJECTION').lower()
-                false_e = float(proj4_dict['+x_0'])
-                false_n = float(proj4_dict['+y_0'])
-                lat_po = float(proj4_dict['+lat_0'])
-                lon_po = float(proj4_dict['+lon_0'])
-                long_name = 'CRS definition'
-                # lon_pm = 0.
-                semi_major_axis = spref.GetSemiMajor()
-                inverse_flattening = spref.GetInvFlattening()
-                spatial_ref = self.spatialref
-                geotransform = "{:} {:} {:} {:} {:} {:}".format(
-                    int(self.geotransform[0]), int(self.geotransform[1]),
-                    int(self.geotransform[2]), int(self.geotransform[3]),
-                    int(self.geotransform[4]), int(self.geotransform[5]))
+                    false_e = float(proj4_dict['+x_0'])
+                    false_n = float(proj4_dict['+y_0'])
+                    lat_po = float(proj4_dict['+lat_0'])
+                    lon_po = float(proj4_dict['+lon_0'])
+                    long_name = 'CRS definition'
+                    # lon_pm = 0.
+                    semi_major_axis = spref.GetSemiMajor()
+                    inverse_flattening = spref.GetInvFlattening()
+                    spatial_ref = self.spatialref
+                    geotransform = "{:} {:} {:} {:} {:} {:}".format(
+                        int(self.geotransform[0]), int(self.geotransform[1]),
+                        int(self.geotransform[2]), int(self.geotransform[3]),
+                        int(self.geotransform[4]), int(self.geotransform[5]))
 
-                attr = OrderedDict([('grid_mapping_name', self.gmn),
-                                    ('false_easting', false_e),
-                                    ('false_northing', false_n),
-                                    ('latitude_of_projection_origin', lat_po),
-                                    ('longitude_of_projection_origin', lon_po),
-                                    ('long_name', long_name),
-                                    ('semi_major_axis', semi_major_axis),
-                                    ('inverse_flattening', inverse_flattening),
-                                    ('spatial_ref', spatial_ref),
-                                    ('GeoTransform', geotransform)])
+                    attr = OrderedDict([('grid_mapping_name', self.gmn),
+                                        ('false_easting', false_e),
+                                        ('false_northing', false_n),
+                                        ('latitude_of_projection_origin', lat_po),
+                                        ('longitude_of_projection_origin', lon_po),
+                                        ('long_name', long_name),
+                                        ('semi_major_axis', semi_major_axis),
+                                        ('inverse_flattening', inverse_flattening),
+                                        ('spatial_ref', spatial_ref),
+                                        ('GeoTransform', geotransform)])
+                else:
+                    self.gmn = 'proj_unknown'
+                    spatial_ref = self.spatialref
+                    geotransform = "{:} {:} {:} {:} {:} {:}".format(
+                        int(self.geotransform[0]), int(self.geotransform[1]),
+                        int(self.geotransform[2]), int(self.geotransform[3]),
+                        int(self.geotransform[4]), int(self.geotransform[5]))
+                    attr = OrderedDict([('grid_mapping_name', 'None'),
+                                        ('spatial_ref', spatial_ref),
+                                        ('GeoTransform', geotransform)])
 
                 crs = self.src.createVariable(self.gmn, 'S1', ())
                 crs.setncatts(attr)
@@ -306,7 +318,10 @@ class NcFile(object):
                                          self.time_units, 'standard')
                 self.src_var[k][append_start:] = dates
             else:
-                self.src_var[k][append_start:, :, :] = ds[k].data
+                if len(ds.dims) == 3:
+                    self.src_var[k][append_start:, :, :] = ds[k].data
+                elif len(ds.dims) == 2:
+                    self.src_var[k][:, :] = ds[k].data
 
     def read(self):
         """

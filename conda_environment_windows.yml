@@ -5,9 +5,13 @@ dependencies:
     - python=3.6
     - gdal<=3.0.0
     - numpy
-    - pandas
+    - geopandas
     - pyproj
     - dask
     - xarray
     - netcdf4
     - matplotlib
+    - cartopy
+    - shapely
+    - numba
+    - opencv
