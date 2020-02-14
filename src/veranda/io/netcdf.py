@@ -115,15 +115,15 @@ class NcFile(object):
         else:
             return None
 
-    def _open(self, x_dim=None, y_dim=None, data_var_name=None):
+    def _open(self, n_x=None, n_y=None, data_var_name=None):
         """
         Open file.
 
         Parameters
         ----------
-        x_dim : int, optional
+        n_x : int, optional
             Size of x dimension.
-        y_dim : int, optional
+        n_y : int, optional
             Size of y dimension.
         data_var_name: str, optional
             Data variable name of netCDF4/xarray object.
@@ -227,8 +227,8 @@ class NcFile(object):
             if 'time' not in self.src.dimensions:
                 self.src.createDimension('time', None)
 
-            if 'x' not in self.src.dimensions:
-                self.src.createDimension('x', x_dim)
+            if 'x' not in self.src.dimensions and n_x is not None:
+                self.src.createDimension('x', n_x)
                 attr = OrderedDict([
                     ('standard_name', 'projection_x_coordinate'),
                     ('long_name', 'x coordinate of projection'),
@@ -236,11 +236,12 @@ class NcFile(object):
                 x = self.src.createVariable('x', 'float64', ('x',))
                 x.setncatts(attr)
                 x[:] = self.geotransform[0] + \
-                    (0.5 + np.arange(x_dim)) * self.geotransform[1] + \
-                    (0.5 + np.arange(x_dim)) * self.geotransform[2]
+                        (0.5 + np.arange(n_y)) * self.geotransform[1] + \
+                        (0.5 + np.arange(n_y)) * self.geotransform[2]
 
-            if 'y' not in self.src.dimensions:
-                self.src.createDimension('y', y_dim)
+            if 'y' not in self.src.dimensions and n_y is not None:
+
+                self.src.createDimension('y', n_y)
                 attr = OrderedDict([
                     ('standard_name', 'projection_y_coordinate'),
                     ('long_name', 'y coordinate of projection'),
@@ -248,14 +249,15 @@ class NcFile(object):
                 y = self.src.createVariable('y', 'float64', ('y',), )
                 y.setncatts(attr)
                 y[:] = self.geotransform[3] + \
-                    (0.5 + np.arange(y_dim)) * self.geotransform[4] + \
-                    (0.5 + np.arange(y_dim)) * self.geotransform[5]
+                        (0.5 + np.arange(n_x)) * self.geotransform[4] + \
+                        (0.5 + np.arange(n_x)) * self.geotransform[5]
 
         if hasattr(self.src, 'dims'):
             self.shape = (self.src.dims['y'], self.src.dims['x'])
         else:
             self.shape = (self.src.dimensions['y'].size, self.src.dimensions['x'].size)
 
+    # TODO: add x and y dimensions and check updated implementation!
     def write(self, ds):
         """
         Write data into netCDF4 file.
@@ -268,7 +270,9 @@ class NcFile(object):
         """
         # open file and create dimensions
         if self.src is None:
-            self._open(ds.dims['x'], ds.dims['y'])
+            n_x = None if 'x' not in ds.dims.keys() else ds.dims['x']
+            n_y = None if 'y' not in ds.dims.keys() else ds.dims['y']
+            self._open(n_x=n_x, n_y=n_y)
 
         # determine index where to append
         if self.src_var:
@@ -279,7 +283,6 @@ class NcFile(object):
         # create variables
         for k in ds.variables:
             if not k in self.src.variables:
-
                 if k == 'time':
                     if self.chunksizes is not None:
                         chunksizes = (self.chunksizes[0], )
@@ -311,12 +314,17 @@ class NcFile(object):
                     if self.gmn is not None:
                         self.src_var[k].setncattr('grid_mapping', self.gmn)
 
+            if k not in self.src_var and k in self.src.variables:
+                self.src_var[k] = self.src[k]
+
         # fill variables with data
         for k in ds.variables:
             if k == 'time':
                 dates = netCDF4.date2num(ds[k].to_index().to_pydatetime(),
                                          self.time_units, 'standard')
                 self.src_var[k][append_start:] = dates
+            elif k in ['x', 'y']:
+                self.src_var[k][:] = ds[k].data
             else:
                 if len(ds.dims) == 3:
                     self.src_var[k][append_start:, :, :] = ds[k].data

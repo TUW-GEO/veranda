@@ -404,7 +404,7 @@ class GeoTiffFile(object):
         if self.src is None:
             raise IOError("Open failed: %s".format(self.filename))
 
-    def read(self, band=1, return_tags=True, encode_func=None, sub_rect=None):
+    def read(self, band=1, return_tags=False, encode_func=None, sub_rect=None):
         """
         Read data from raster file.
 
@@ -416,7 +416,7 @@ class GeoTiffFile(object):
         band : int, optional
             Band number (starting with 1). Default: 1
         return_tags : bool, optional
-            If set tags will be returned as well
+            If set tags will be returned as well (default is False)
         encode_func : func (optional)
             function of type "encode_func(data, tags)" to encode the array
             in-place.
