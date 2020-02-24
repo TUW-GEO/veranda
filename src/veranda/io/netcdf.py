@@ -72,19 +72,17 @@ class NcFile(object):
     var_chunk_cache : tuple, optional
         Change variable chunk cache settings. A tuple containing
         size, nelems, preemption (default None, using default cache size)
-    auto_scale : bool, optional
-        should the data in variables automatically be encoded?
-        that means: when reading ds, "scale_factor" and "add_offset" is applied.
+    auto_decode : bool, optional
+        If true, when reading ds, "scale_factor" and "add_offset" is applied (default is True).
         ATTENTION: Also the xarray dataset may applies encoding/scaling what
                 can mess up things
-
     """
 
     def __init__(self, filename, mode='r', complevel=2, zlib=True,
                  geotransform=(0, 1, 0, 0, 0, 1), spatialref=None,
                  overwrite=True, nc_format="NETCDF4_CLASSIC", chunksizes=None,
                  time_units="days since 1900-01-01 00:00:00",
-                 var_chunk_cache=None, auto_scale=True, shape=None, data_var_name=None):
+                 var_chunk_cache=None, auto_decode=True, shape=None, data_var_name=None):
 
         self.filename = filename
         self.mode = mode
@@ -103,7 +101,7 @@ class NcFile(object):
         self.chunksizes = chunksizes
         self.time_units = time_units
         self.var_chunk_cache = var_chunk_cache
-        self.auto_scale = auto_scale
+        self.auto_decode = auto_decode
 
         if self.mode in ['r', 'r_xarray', 'r_netcdf']:
             self._open(data_var_name=data_var_name)
@@ -131,7 +129,7 @@ class NcFile(object):
 
         if self.mode in ['r', 'r_xarray']:
             self.src = xr.open_dataset(
-                self.filename, mask_and_scale=self.auto_scale)
+                self.filename, mask_and_scale=self.auto_decode)
             if 'time' in list(self.src.dims.keys()) and self.src.variables['time'].dtype == 'float':
                 timestamps = netCDF4.num2date(self.src.variables['time'], self.time_units)
                 self.src = self.src.assign_coords({'time': timestamps})
@@ -288,7 +286,7 @@ class NcFile(object):
                         k, ds[k].dtype.name, ds[k].dims,
                         chunksizes=self.chunksizes, zlib=self.zlib,
                         complevel=self.complevel, fill_value=fill_value)
-                    self.src_var[k].set_auto_scale(self.auto_scale)
+                    self.src_var[k].set_auto_scale(self.auto_decode)
 
                     if self.var_chunk_cache is not None:
                         self.src_var[k].set_var_chunk_cache(

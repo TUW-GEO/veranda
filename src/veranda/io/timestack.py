@@ -419,13 +419,17 @@ class NcRasterTimeStack(object):
         File name prefix (default: '').
     fn_suffix : str, optional
         File name suffix (default: '.nc').
+    auto_decode : bool, optional
+        If true, when reading ds, "scale_factor" and "add_offset" is applied (default is True).
+        ATTENTION: Also the xarray dataset may applies encoding/scaling what
+                can mess up things
     """
 
     def __init__(self, mode='r', file_ts=None, out_path=None,
                  stack_size='%Y%W', geotransform=(0, 1, 0, 0, 0, 1),
                  spatialref=None, compression=2, chunksizes=None,
                  chunks=None, time_units="days since 1900-01-01 00:00:00",
-                 fn_prefix='', fn_suffix='.nc'):
+                 fn_prefix='', fn_suffix='.nc', auto_decode=True):
 
         self.mode = mode
         self.file_ts = file_ts
@@ -439,6 +443,7 @@ class NcRasterTimeStack(object):
         self.chunksizes = chunksizes
         self.chunks = chunks
         self.time_units = time_units
+        self.auto_decode = auto_decode
 
         self.fn_prefix = fn_prefix
         self.fn_suffix = fn_suffix
@@ -450,8 +455,8 @@ class NcRasterTimeStack(object):
         Building file stack and initialize netCDF4.mfdataset.
         """
         if self.file_ts is not None:
-            self.mfdataset = xr.open_mfdataset(
-                self.file_ts['filenames'].tolist(), chunks=self.chunks, combine='nested', concat_dim='time')
+            self.mfdataset = xr.open_mfdataset(self.file_ts['filenames'].tolist(), chunks=self.chunks,
+                                               combine='nested', concat_dim='time', mask_and_scale=self.auto_decode)
         else:
             raise RuntimeError('Building stack failed')
 
