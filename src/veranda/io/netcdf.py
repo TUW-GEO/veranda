@@ -196,9 +196,9 @@ class NcFile(object):
                     inverse_flattening = spref.GetInvFlattening()
                     spatial_ref = self.spatialref
                     geotransform = "{:} {:} {:} {:} {:} {:}".format(
-                        int(self.geotransform[0]), int(self.geotransform[1]),
-                        int(self.geotransform[2]), int(self.geotransform[3]),
-                        int(self.geotransform[4]), int(self.geotransform[5]))
+                        self.geotransform[0], self.geotransform[1],
+                        self.geotransform[2], self.geotransform[3],
+                        self.geotransform[4], self.geotransform[5])
 
                     attr = OrderedDict([('grid_mapping_name', self.gmn),
                                         ('false_easting', false_e),
@@ -214,9 +214,9 @@ class NcFile(object):
                     self.gmn = 'proj_unknown'
                     spatial_ref = self.spatialref
                     geotransform = "{:} {:} {:} {:} {:} {:}".format(
-                        int(self.geotransform[0]), int(self.geotransform[1]),
-                        int(self.geotransform[2]), int(self.geotransform[3]),
-                        int(self.geotransform[4]), int(self.geotransform[5]))
+                        self.geotransform[0], self.geotransform[1],
+                        self.geotransform[2], self.geotransform[3],
+                        self.geotransform[4], self.geotransform[5])
                     attr = OrderedDict([('grid_mapping_name', 'None'),
                                         ('spatial_ref', spatial_ref),
                                         ('GeoTransform', geotransform)])
@@ -331,7 +331,7 @@ class NcFile(object):
                 elif len(ds.dims) == 2:
                     self.src_var[k][:, :] = ds[k].data
 
-    def read(self):
+    def read(self, col, row, col_size=1, row_size=1, band=None):
         """
         Read data from netCDF4 file.
 
@@ -340,8 +340,19 @@ class NcFile(object):
         data : xarray.Dataset or netCDF4.variables
             Data stored in NetCDF file. Data type depends on read mode.
         """
+        # TODO: check band/data variable availability
+        if col is None and row is None:
+            if band is not None:
+                return self.src_var[band].to_dataset()
+            else:
+                return self.src_var
+        else:
+            if band is not None:
+                return self.src_var[band][row:(row + row_size), col:(col + col_size)].to_dataset()
+            else:
+                # TODO: what to do here?
+                return self.src_var
 
-        return self.src_var
 
     def decode_xarr_var(self, var):
         """

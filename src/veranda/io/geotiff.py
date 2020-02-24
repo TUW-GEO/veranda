@@ -404,7 +404,7 @@ class GeoTiffFile(object):
         if self.src is None:
             raise IOError("Open failed: %s".format(self.filename))
 
-    def read(self, band=1, return_tags=False, encode_func=None, sub_rect=None):
+    def read(self, col, row, col_size=1, row_size=1, band=1, return_tags=False):
         """
         Read data from raster file.
 
@@ -434,25 +434,20 @@ class GeoTiffFile(object):
 
         """
         if band is None:
-            if sub_rect is None:
+            if row is None and col is None:
                 data = self.src.ReadAsArray()
             else:
-                data = self.src.ReadAsArray(
-                    sub_rect[0], sub_rect[1], sub_rect[2], sub_rect[3])
+                data = self.src.ReadAsArray(col, row, col_size, row_size)
         else:
             gdal_band = self.src.GetRasterBand(int(band))
             if gdal_band is None:
                 raise IOError("Reading band {:} failed.".format(band))
-            if sub_rect is None:
+            if row is None and col is None:
                 data = gdal_band.ReadAsArray()
             else:
-                data = gdal_band.ReadAsArray(
-                    sub_rect[0], sub_rect[1], sub_rect[2], sub_rect[3])
+                data = gdal_band.ReadAsArray(col, row, col_size, row_size)
 
         tags = self.read_tags(band)
-
-        if encode_func is not None:
-            data = encode_func(data, tags)
 
         if return_tags:
             return data, tags
@@ -526,7 +521,10 @@ class GeoTiffFile(object):
                 self._open(data.shape[1], data.shape[2], data.dtype.name)
             elif data.ndim == 2:
                 if self.count is None:
-                    raise ValueError("Number of band (counts) not defined")
+                    self.count = 1
+                if band is None:
+                    band = 1
+                    # raise ValueError("Number of band (counts) not defined") #ToDO: @SHahn why? If data is 2D count should be 1
                 self._open(data.shape[0], data.shape[1], data.dtype.name)
             else:
                 raise ValueError("Only 2d or 3d array supported")
