@@ -232,3 +232,17 @@ class SpatialInconsistencyError(IOError):
         """ String representation of this class. """
 
         return self.message
+
+
+class DimensionsMismatch(Exception):
+    """ Class to handle exceptions thrown when data dimensions mismatch. """
+
+    def __init__(self, dim_is, dim_should):
+        """Constructor of `DimensionsMismatchError`."""
+
+        self.message = "Number of dimension {} mismatches number of dimensions needed ({}).".format(dim_is, dim_should)
+
+    def __str__(self):
+        """ String representation of this class. """
+
+        return self.message
