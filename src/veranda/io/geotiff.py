@@ -404,7 +404,7 @@ class GeoTiffFile(object):
         if self.src is None:
             raise IOError("Open failed: %s".format(self.filename))
 
-    def read(self, col, row, col_size=1, row_size=1, band=1, return_tags=False):
+    def read(self, col=None, row=None, col_size=1, row_size=1, band=1, return_tags=False):
         """
         Read data from raster file.
 

@@ -128,6 +128,8 @@ class NcFile(object):
         data_var_name: str, optional
             Data variable name of netCDF4/xarray object.
         """
+        # TODO: introduce dimensions which are allowed to be set from outside
+        dims = ['time', 'y', 'x']
 
         if self.mode in ['r', 'r_xarray']:
             self.src = xr.open_dataset(
@@ -253,9 +255,16 @@ class NcFile(object):
                         (0.5 + np.arange(n_x)) * self.geotransform[5]
 
         if hasattr(self.src, 'dims'):
-            self.shape = (self.src.dims['y'], self.src.dims['x'])
+            if 'time' in self.src.dims.keys():
+                self.shape = (self.src.dims['time'], self.src.dims['y'], self.src.dims['x'])
+            else:
+                self.shape = (self.src.dims['y'], self.src.dims['x'])
         else:
-            self.shape = (self.src.dimensions['y'].size, self.src.dimensions['x'].size)
+            if 'time' in self.src.dimensions.keys():
+                self.shape = (self.src.dimensions['time'].size, self.src.dimensions['y'].size,
+                              self.src.dimensions['x'].size)
+            else:
+                self.shape = (self.src.dimensions['y'].size, self.src.dimensions['x'].size)
 
     # TODO: add x and y dimensions and check updated implementation!
     def write(self, ds):
