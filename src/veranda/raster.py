@@ -1025,8 +1025,8 @@ class RasterLayer(RasterData):
         -------
         RasterLayer
         """
-        sref = SpatialRef(io.spatialref)
-        geotrans = io.geotransform
+        sref = SpatialRef(io.sref)
+        geotrans = io.geotrans
 
         if read:
             read_kwargs = read_kwargs if read_kwargs is not None else {}
@@ -1498,8 +1498,8 @@ class RasterStack(RasterData):
         RasterStack
         """
 
-        sref = SpatialRef(io.spatialref)
-        geotrans = io.geotransform
+        sref = SpatialRef(io.sref)
+        geotrans = io.geotrans
 
         if read:
             read_kwargs = read_kwargs if read_kwargs is not None else {}

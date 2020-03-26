@@ -82,7 +82,7 @@ class RasterLayerTest(unittest.TestCase):
 
         # create files on disk
         if not os.path.exists(self.gt_filepath_read):
-            gt_file = GeoTiffFile(self.gt_filepath_read, mode='w', geotransform=self.gt, spatialref=self.sref.wkt,
+            gt_file = GeoTiffFile(self.gt_filepath_read, mode='w', geotrans=self.gt, sref=self.sref.wkt,
                                   count=1)
             gt_file.write(self.np_data, band=1)
             gt_file.close()
@@ -407,7 +407,7 @@ class RasterStackTest(unittest.TestCase):
         gt_raster_layers = []
         for i, filepath in enumerate(self.gt_filepaths_read):
             if not os.path.exists(filepath):
-                gt_file = GeoTiffFile(filepath, mode='w', geotransform=self.gt, spatialref=self.sref.wkt, count=1)
+                gt_file = GeoTiffFile(filepath, mode='w', geotrans=self.gt, sref=self.sref.wkt, count=1)
                 gt_file.write(self.np_data[i], band=1)
                 gt_file.close()
 
