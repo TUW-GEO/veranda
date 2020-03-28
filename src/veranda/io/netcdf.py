@@ -21,7 +21,7 @@ import numpy as np
 import xarray as xr
 from osgeo import osr
 
-
+# todo: enhance reading netcdf as NetCDF4 datasets
 class NcFile(object):
 
     """
@@ -33,7 +33,7 @@ class NcFile(object):
 
     Parameters
     ----------
-    filename : str
+    filepath : str
         File name.
     mode : str, optional
         File opening mode. Default: 'r' = xarray.open_dataset
@@ -48,7 +48,7 @@ class NcFile(object):
     zlib : bool, optional
         If the optional keyword zlib is True, the data will be compressed
         in the netCDF file using gzip compression (default True).
-    geotransform : tuple or list, optional
+    geotrans : tuple or list, optional
         Geotransform parameters (default (0, 1, 0, 0, 0, 1)).
         0: Top left x
         1: W-E pixel resolution
@@ -56,7 +56,7 @@ class NcFile(object):
         3: Top left y
         4: Rotation, 0 if image is "north up"
         5: N-S pixel resolution (negative value if North up)
-    spatialref : str, optional
+    sref : str, optional
         Coordinate Reference System (CRS) in Wkt form (default None).
     overwrite : boolean, optional
         Flag if file can be overwritten if it already exists (default True).
@@ -80,71 +80,54 @@ class NcFile(object):
 
     """
 
-    def __init__(self, filename, mode='r', complevel=2, zlib=True,
-                 geotransform=(0, 1, 0, 0, 0, 1), spatialref=None,
-                 overwrite=True, nc_format="NETCDF4_CLASSIC", chunksizes=None,
+    def __init__(self, filepath, mode='r', geotrans=(0, 1, 0, 0, 0, 1), sref=None, overwrite=True,
+                 complevel=2, zlib=True, nc_format="NETCDF4_CLASSIC", chunksizes=None,
                  time_units="days since 1900-01-01 00:00:00",
-                 var_chunk_cache=None, auto_scale=True, shape=None, data_var_name=None):
+                 var_chunk_cache=None, auto_scale=True, shape=None):
 
-        self.filename = filename
-        self.mode = mode
         self.src = None
         self.src_var = {}
+        self.filepath = filepath
+        self.mode = mode
+        self.shape = None
+        self.sref = sref
+        self.geotrans = geotrans
+        self.overwrite = overwrite
+
         self.complevel = complevel
         self.zlib = zlib
-
-        self.spatialref = spatialref
-        self.geotransform = geotransform
-        self.gmn = None
-
-        self.overwrite = overwrite
+        self.gm_name = None
         self.nc_format = nc_format
-        self.shape = shape
         self.chunksizes = chunksizes
         self.time_units = time_units
         self.var_chunk_cache = var_chunk_cache
         self.auto_scale = auto_scale
 
         if self.mode in ['r', 'r_xarray', 'r_netcdf']:
-            self._open(data_var_name=data_var_name)
+            self._open()
 
     @property
     def metadata(self):
-        if self.src is not None:
-            return self.src.ncattrs()
-        else:
-            return None
+        return self.get_global_atts()
 
-    def _open(self, n_x=None, n_y=None, data_var_name=None):
+    def _open(self, n_rows=None, n_cols=None, auto_scale=False):
         """
         Open file.
 
         Parameters
         ----------
-        n_x : int, optional
-            Size of x dimension.
-        n_y : int, optional
-            Size of y dimension.
-        data_var_name: str, optional
-            Data variable name of netCDF4/xarray object.
+        y_coords : int, optional
+            Number rows or size of y dimension.
+        x_coords : int, optional
+            Number of columns or size of x dimension.
         """
-        # TODO: introduce dimensions which are allowed to be set from outside
-        dims = ['time', 'y', 'x']
 
         if self.mode in ['r', 'r_xarray']:
-            self.src = xr.open_dataset(
-                self.filename, mask_and_scale=self.auto_scale)
-            if 'time' in list(self.src.dims.keys()) and self.src.variables['time'].dtype == 'float':
-                timestamps = netCDF4.num2date(self.src.variables['time'], self.time_units)
-                self.src = self.src.assign_coords({'time': timestamps})
+            self.src = xr.open_dataset(self.filepath, mask_and_scale=auto_scale)
             self.src_var = self.src
 
         if self.mode == 'r_netcdf':
-            self.src = netCDF4.Dataset(self.filename, mode='r')
-            self.src_var = self.src.variables
-            if 'time' in list(self.src.dimensions.keys()) and self.src.variables['time'].dtype == 'float':
-                timestamps = netCDF4.num2date(np.array(self.src.variables['time']), self.time_units)
-                self.src.variables['time'] = timestamps
+            self.src = netCDF4.Dataset(self.filepath, mode='r')
             self.src_var = self.src.variables
 
             for var in self.src_var:
@@ -154,36 +137,39 @@ class NcFile(object):
                         self.var_chunk_cache[2])
 
         if self.mode == 'a':
-            self.src = netCDF4.Dataset(self.filename, mode=self.mode)
+            self.src = netCDF4.Dataset(self.filepath, mode='a')
             self.src_var = self.src.variables
 
         if self.mode in ['r', 'a', 'r_netcdf', 'r_xarray']:
-            if data_var_name is None:
-                for var_name in self.src_var.keys():
-                    if "grid_mapping" in self.src_var[var_name].attrs:
-                        data_var_name = var_name
 
-            if data_var_name is not None and "grid_mapping" in self.src_var[data_var_name].attrs:
-                gmn = self.src_var[data_var_name].attrs["grid_mapping"]
-                self.geotransform = tuple(map(float, self.src_var[gmn].attrs['GeoTransform'].split(' '))) \
-                    if 'GeoTransform' in self.src_var[gmn].attrs.keys() else None
-                self.spatialref = self.src_var[gmn].attrs['spatial_ref'] \
-                    if 'spatial_ref' in self.src_var[gmn].attrs.keys() else None
+            # search for grid mapping attributes in the dataset
+            gm_var_name = None
+            for var_name in self.src_var.keys():
+                if hasattr(self.src_var[var_name], "attrs") and "grid_mapping" in self.src_var[var_name].attrs:
+                    gm_var_name = var_name
+
+            # retrieve geotransform and spatial reference parameters
+            if gm_var_name is not None:
+                self.gm_name = self.src_var[gm_var_name].attrs["grid_mapping"]
+                if 'GeoTransform' in self.src_var[self.gm_name].attrs.keys():
+                    self.geotrans = tuple(map(float, self.src_var[self.gm_name].attrs['GeoTransform'].split(' ')))
+                if 'spatial_ref' in self.src_var[self.gm_name].attrs.keys():
+                    self.sref = self.src_var[self.gm_name].attrs['spatial_ref']
 
         if self.mode == 'w':
-            self.src = netCDF4.Dataset(self.filename, mode=self.mode,
+            self.src = netCDF4.Dataset(self.filepath, mode='w',
                                        clobber=self.overwrite,
                                        format=self.nc_format)
 
-            if self.spatialref is not None:
-                spref = osr.SpatialReference()
-                spref.ImportFromWkt(self.spatialref)
-                proj = spref.GetAttrValue('PROJECTION')
+            if self.sref is not None:
+                sref = osr.SpatialReference()
+                sref.ImportFromWkt(self.sref)
+                proj = sref.GetAttrValue('PROJECTION')
 
                 if proj is not None:
-                    self.gmn = proj.lower()
+                    self.gm_name = proj.lower()
                     proj4_dict = {}
-                    for subset in spref.ExportToProj4().split(' '):
+                    for subset in sref.ExportToProj4().split(' '):
                         x = subset.split('=')
                         if len(x) == 2:
                             proj4_dict[x[0]] = x[1]
@@ -193,16 +179,14 @@ class NcFile(object):
                     lat_po = float(proj4_dict['+lat_0'])
                     lon_po = float(proj4_dict['+lon_0'])
                     long_name = 'CRS definition'
-                    # lon_pm = 0.
-                    semi_major_axis = spref.GetSemiMajor()
-                    inverse_flattening = spref.GetInvFlattening()
-                    spatial_ref = self.spatialref
-                    geotransform = "{:} {:} {:} {:} {:} {:}".format(
-                        self.geotransform[0], self.geotransform[1],
-                        self.geotransform[2], self.geotransform[3],
-                        self.geotransform[4], self.geotransform[5])
+                    semi_major_axis = sref.GetSemiMajor()
+                    inverse_flattening = sref.GetInvFlattening()
+                    geotrans = "{:} {:} {:} {:} {:} {:}".format(
+                        self.geotrans[0], self.geotrans[1],
+                        self.geotrans[2], self.geotrans[3],
+                        self.geotrans[4], self.geotrans[5])
 
-                    attr = OrderedDict([('grid_mapping_name', self.gmn),
+                    attr = OrderedDict([('grid_mapping_name', self.gm_name),
                                         ('false_easting', false_e),
                                         ('false_northing', false_n),
                                         ('latitude_of_projection_origin', lat_po),
@@ -210,49 +194,62 @@ class NcFile(object):
                                         ('long_name', long_name),
                                         ('semi_major_axis', semi_major_axis),
                                         ('inverse_flattening', inverse_flattening),
-                                        ('spatial_ref', spatial_ref),
-                                        ('GeoTransform', geotransform)])
+                                        ('spatial_ref', self.sref),
+                                        ('GeoTransform', geotrans)])
                 else:
-                    self.gmn = 'proj_unknown'
-                    spatial_ref = self.spatialref
-                    geotransform = "{:} {:} {:} {:} {:} {:}".format(
-                        self.geotransform[0], self.geotransform[1],
-                        self.geotransform[2], self.geotransform[3],
-                        self.geotransform[4], self.geotransform[5])
-                    attr = OrderedDict([('grid_mapping_name', 'None'),
-                                        ('spatial_ref', spatial_ref),
-                                        ('GeoTransform', geotransform)])
+                    self.gm_name = None
+                    geotrans = "{:} {:} {:} {:} {:} {:}".format(
+                        self.geotrans[0], self.geotrans[1],
+                        self.geotrans[2], self.geotrans[3],
+                        self.geotrans[4], self.geotrans[5])
+                    attr = OrderedDict([('grid_mapping_name',  self.gm_name),
+                                        ('spatial_ref', self.sref),
+                                        ('GeoTransform', geotrans)])
 
-                crs = self.src.createVariable(self.gmn, 'S1', ())
+                crs = self.src.createVariable(self.gm_name, 'S1', ())
                 crs.setncatts(attr)
 
             if 'time' not in self.src.dimensions:
-                self.src.createDimension('time', None)
+                self.src.createDimension('time', None)  # None means unlimited dimension
+                if self.chunksizes is not None:
+                    chunksizes = (self.chunksizes[0],)
+                else:
+                    chunksizes = None
 
-            if 'x' not in self.src.dimensions and n_x is not None:
-                self.src.createDimension('x', n_x)
-                attr = OrderedDict([
-                    ('standard_name', 'projection_x_coordinate'),
-                    ('long_name', 'x coordinate of projection'),
-                    ('units', 'm')])
-                x = self.src.createVariable('x', 'float64', ('x',))
-                x.setncatts(attr)
-                x[:] = self.geotransform[0] + \
-                        (0.5 + np.arange(n_y)) * self.geotransform[1] + \
-                        (0.5 + np.arange(n_y)) * self.geotransform[2]
+                self.src_var['time'] = self.src.createVariable('time', np.float64, ('time',), chunksizes=chunksizes,
+                                                               zlib=self.zlib, complevel=self.complevel)
+            else:
+                self.src_var['time'] = self.src['time']
 
-            if 'y' not in self.src.dimensions and n_y is not None:
-
-                self.src.createDimension('y', n_y)
+            if 'y' not in self.src.dimensions and n_rows is not None:
+                self.src.createDimension('y', n_rows)
                 attr = OrderedDict([
                     ('standard_name', 'projection_y_coordinate'),
                     ('long_name', 'y coordinate of projection'),
                     ('units', 'm')])
                 y = self.src.createVariable('y', 'float64', ('y',), )
                 y.setncatts(attr)
-                y[:] = self.geotransform[3] + \
-                        (0.5 + np.arange(n_x)) * self.geotransform[4] + \
-                        (0.5 + np.arange(n_x)) * self.geotransform[5]
+                y[:] = self.geotrans[3] + \
+                           (0.5 + np.arange(n_rows)) * self.geotrans[4] + \
+                           (0.5 + np.arange(n_rows)) * self.geotrans[5]
+                self.src_var['y'] = y
+            else:
+                self.src_var['y'] = self.src['y']
+
+            if 'x' not in self.src.dimensions and n_cols is not None:
+                self.src.createDimension('x', n_cols)
+                attr = OrderedDict([
+                    ('standard_name', 'projection_x_coordinate'),
+                    ('long_name', 'x coordinate of projection'),
+                    ('units', 'm')])
+                x = self.src.createVariable('x', 'float64', ('x',))
+                x.setncatts(attr)
+                x[:] = self.geotrans[0] + \
+                           (0.5 + np.arange(n_cols)) * self.geotrans[1] + \
+                           (0.5 + np.arange(n_cols)) * self.geotrans[2]
+                self.src_var['x'] = x
+            else:
+                self.src_var['x'] = self.src['x']
 
         if hasattr(self.src, 'dims'):
             if 'time' in self.src.dims.keys():
@@ -266,143 +263,163 @@ class NcFile(object):
             else:
                 self.shape = (self.src.dimensions['y'].size, self.src.dimensions['x'].size)
 
-    # TODO: add x and y dimensions and check updated implementation!
-    def write(self, ds):
+    def write(self, ds, nodatavals=None, encoder=None, encoder_kwargs=None, auto_scale=False):
         """
         Write data into netCDF4 file.
 
         Parameters
         ----------
         ds : xarray.Dataset
-            Data set containing dims ['time', 'x', 'y'].
+            Data set containing dims ['time', 'y', 'x'].
 
         """
-        # open file and create dimensions
-        if self.src is None:
-            n_x = None if 'x' not in ds.dims.keys() else ds.dims['x']
-            n_y = None if 'y' not in ds.dims.keys() else ds.dims['y']
-            self._open(n_x=n_x, n_y=n_y)
+        encoder_kwargs = {} if encoder_kwargs is None else encoder_kwargs
 
-        # determine index where to append
-        if self.src_var:
+        bands = list(set(ds.variables.keys()) - set(['time', 'x', 'y']))
+        n_bands = len(bands)
+
+        if nodatavals is not None and not isinstance(nodatavals, list):
+            nodatavals = [nodatavals] * n_bands
+        elif nodatavals is None:
+            nodatavals = [-9999] * n_bands  # TODO: how should the default behaviour be here?
+
+        # open file and create dimensions and coordinates
+        if self.src is None:
+            self._open(n_rows=ds.dims['y'], n_cols=ds.dims['x'])
+
+        if self.mode == 'a':
+            # determine index where to append
             append_start = self.src_var['time'].shape[0]
         else:
             append_start = 0
 
-        # create variables
-        for k in ds.variables:
-            if not k in self.src.variables:
-                if k == 'time':
-                    if self.chunksizes is not None:
-                        chunksizes = (self.chunksizes[0], )
-                    else:
-                        chunksizes = None
+        # fill coordinate data
+        coord_names = list(ds.coords.keys())
+        if 'time' in coord_names:
+            dates = netCDF4.date2num(ds['time'].to_index().to_pydatetime(),
+                                     self.time_units, 'standard')
+            self.src_var['time'][append_start:] = dates
+        if 'x' in coord_names:
+            self.src_var['x'][:] = ds['x'].data
+        if 'y' in coord_names:
+            self.src_var['y'][:] = ds['y'].data
 
-                    self.src_var[k] = self.src.createVariable(
-                        k, np.float64, ds[k].dims, chunksizes=chunksizes,
-                        zlib=self.zlib, complevel=self.complevel)
+        n_dims = len(ds.dims)
+        for i, band in enumerate(bands):
+            if band not in self.src.variables:
+                # check if fill value is included in attributes
+                if 'fill_value' in ds[band].attrs:
+                    fill_value = ds[band].attrs['fill_value']
                 else:
-                    # check if fill value is included in attributes
-                    if 'fill_value' in ds[k].attrs:
-                        fill_value = ds[k].attrs['fill_value']
-                    else:
-                        fill_value = None
+                    fill_value = None
 
-                    self.src_var[k] = self.src.createVariable(
-                        k, ds[k].dtype.name, ds[k].dims,
-                        chunksizes=self.chunksizes, zlib=self.zlib,
-                        complevel=self.complevel, fill_value=fill_value)
-                    self.src_var[k].set_auto_scale(self.auto_scale)
+                self.src_var[band] = self.src.createVariable(
+                    band, ds[band].dtype.name, ds[band].dims,
+                    chunksizes=self.chunksizes, zlib=self.zlib,
+                    complevel=self.complevel, fill_value=fill_value)
+                self.src_var[band].set_auto_scale(auto_scale)
 
-                    if self.var_chunk_cache is not None:
-                        self.src_var[k].set_var_chunk_cache(
-                            self.var_chunk_cache[0], self.var_chunk_cache[1],
-                            self.var_chunk_cache[2])
+                if self.var_chunk_cache is not None:
+                    self.src_var[band].set_var_chunk_cache(
+                        self.var_chunk_cache[0], self.var_chunk_cache[1],
+                        self.var_chunk_cache[2])
 
-                    self.src_var[k].setncatts(ds[k].attrs)
-                    if self.gmn is not None:
-                        self.src_var[k].setncattr('grid_mapping', self.gmn)
+                self.src_var[band].setncatts(ds[band].attrs)
+                if self.gm_name is not None:
+                    self.src_var[band].setncattr('grid_mapping', self.gm_name)
 
-            if k not in self.src_var and k in self.src.variables:
-                self.src_var[k] = self.src[k]
-
-        # fill variables with data
-        for k in ds.variables:
-            if k == 'time':
-                dates = netCDF4.date2num(ds[k].to_index().to_pydatetime(),
-                                         self.time_units, 'standard')
-                self.src_var[k][append_start:] = dates
-            elif k in ['x', 'y']:
-                self.src_var[k][:] = ds[k].data
+            encoded_data = encoder(ds[band].data, nodataval=nodatavals[i], **encoder_kwargs) \
+                if encoder is not None else ds[band].data
+            if n_dims == 3:
+                self.src_var[band][append_start:, :, :] = encoded_data
+            elif n_dims == 2:
+                self.src_var[band][:, :] = encoded_data
             else:
-                if len(ds.dims) == 3:
-                    self.src_var[k][append_start:, :, :] = ds[k].data
-                elif len(ds.dims) == 2:
-                    self.src_var[k][:, :] = ds[k].data
+                err_msg = "Data is only allowed to have 2 or 3 dimensions, but it has {} dimensions.".format(n_dims)
+                raise ValueError(err_msg)
 
-    def read(self, col, row, col_size=1, row_size=1, band=None):
+    def read(self, row=None, col=None, n_rows=1, n_cols=1, bands=None, nodatavals=None, decoder=None,
+             decoder_kwargs=None):
         """
         Read data from netCDF4 file.
+
+        Parameters
+        ----------
+        row : int, optional
+            Row number/index.
+            If None and `col` is not None, then `row_size` rows with the respective column number will be loaded.
+        col : int, optional
+            Column number/index.
+            If None and `row` is not None, then `col_size` columns with the respective row number will be loaded.
+        n_rows : int, optional
+            Number of rows to read (default is 1).
+        n_cols : int, optional
+            Number of columns to read (default is 1).
+        bands : str or list of str, optional
+            Band numbers/names. If None, all bands will be read.
+        nodatavals : tuple or list, optional
+            List of no data values for each band.
+            Default: -9999 for each band.
+        decoder : function, optional
+            Decoding function expecting a NumPy array as input.
+        decoder_kwargs : dict, optional
+            Keyword arguments for the decoder.
 
         Returns
         -------
         data : xarray.Dataset or netCDF4.variables
             Data stored in NetCDF file. Data type depends on read mode.
         """
-        # TODO: check band/data variable availability
-        if col is None and row is None:
-            if band is not None:
-                return self.src_var[band].to_dataset()
-            else:
-                return self.src_var
+        if nodatavals is not None and not isinstance(nodatavals, list):
+            nodatavals = [nodatavals]
+
+        decoder_kwargs = {} if decoder_kwargs is None else decoder_kwargs
+
+        if row is None and col is None:  # read whole dataset
+            row = 0
+            col = 0
+            n_rows = self.shape[-2]
+            n_cols = self.shape[-1]
+        elif row is None and col is not None:  # read by row
+            row = 0
+            n_cols = self.shape[-1]
+        elif row is not None and col is None:  # read by column
+            col = 0
+            n_rows = self.shape[-2]
+
+        if len(self.shape) == 3:
+            slices = (slice(None), slice(row, row+n_rows), slice(col, col+n_cols))
         else:
-            if band is not None:
-                return self.src_var[band][row:(row + row_size), col:(col + col_size)].to_dataset()
+            slices = (slice(row, row+n_rows), slice(col, col+n_cols))
+
+        if bands is None:
+            bands = list(self.src_var.keys())
+            bands = list(set(bands) - set(['time', 'y', 'x']))
+
+        if self.mode == "r_netcdf":  # convert to xarray if necessary
+            common_chunks = self.src[bands[0]].chunking()
+            chunks = dict()
+            if all([common_chunks == self.src[band].chunking() for band in bands]):  # check if all chunks are the same
+                for i, dim_name in enumerate(list(self.src.dimensions.keys())):
+                    chunks[dim_name] = common_chunks[i]
+            src_var = xr.open_dataset(xr.backends.NetCDF4DataStore(self.src), chunks=chunks)
+        else:
+            src_var = self.src_var
+
+        # convert float timestamps to datetime timestamps
+        if 'time' in list(src_var.dims.keys()) and src_var['time'].dtype == 'float':
+            timestamps = netCDF4.num2date(src_var.variables['time'], self.time_units)
+            src_var = src_var.assign_coords({'time': timestamps})
+
+        data = None
+        for i, band in enumerate(bands):
+            data_ar = src_var[band][slices]
+            if decoder:
+                data_ar.data = decoder(data_ar.data, nodatavals[i], **decoder_kwargs)
+            if data is None:
+                data = data_ar.to_dataset()
             else:
-                # TODO: what to do here?
-                return self.src_var
-
-
-    def decode_xarr_var(self, var):
-        """
-        Decodes the values in the xarray variables.
-
-        BBM: If you find a better way to (safely!) control the decoding, please let me know.
-
-        Parameters
-        ----------
-        var : str
-            name of the variable in the xarray-Dataset
-
-        Returns
-        -------
-        data
-            decoded values of "var",
-            # with applied fill_value
-            # with applied scaling: data * scale_factor + add_offset
-
-        """
-        data = np.float32(self.src_var[var].data)
-
-        # apply filling value
-        try:
-            fv = self.src_var[var].fill_value
-            data[data == fv] = np.nan
-        except:
-            pass
-
-        # get offset
-        try:
-            os = self.src_var[var].add_offset
-        except:
-            os = 0.0
-
-        # apply scaling
-        try:
-            sf = self.src_var[var].scale_factor
-            data = data * sf + os
-        except:
-            pass
+                data = data.merge(data_ar.to_dataset())
 
         return data
 
@@ -415,7 +432,8 @@ class NcFile(object):
         atts : dict
             Global attributes stored as dict.
         """
-        self.src.setncatts(atts)
+        if self.src is not None:
+            self.src.setncatts(atts)
 
     def get_global_atts(self):
         """
@@ -426,13 +444,16 @@ class NcFile(object):
         atts : dict
             Global attributes stored as dict.
         """
-        if hasattr(self.src, "attrs"):
-            return self.src.attrs
+        if self.src is not None:
+            if hasattr(self.src, "attrs"):
+                return self.src.attrs
+            else:
+                attrs = dict()
+                for attr_name in self.src.ncattrs():
+                    attrs[attr_name] = self.src.getncattr(attr_name)
+                return attrs
         else:
-            attrs = dict()
-            for attr_name in self.src.ncattrs():
-                attrs[attr_name] = self.src.getncattr(attr_name)
-            return attrs
+            return None
 
     def close(self):
         """

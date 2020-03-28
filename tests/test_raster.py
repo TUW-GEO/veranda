@@ -87,7 +87,7 @@ class RasterLayerTest(unittest.TestCase):
             gt_file.write(self.np_data, band=1)
             gt_file.close()
         if not os.path.exists(self.nc_filepath_read):
-            nc_file = NcFile(self.nc_filepath_read, mode='w', geotransform=self.gt, spatialref=self.sref.wkt)
+            nc_file = NcFile(self.nc_filepath_read, mode='w', geotrans=self.gt, sref=self.sref.wkt)
             nc_file.write(self.xr_data)
             nc_file.close()
 
@@ -417,7 +417,7 @@ class RasterStackTest(unittest.TestCase):
         nc_raster_layers = []
         for i, filepath in enumerate(self.nc_filepaths_read):
             if not os.path.exists(filepath):
-                nc_file = NcFile(filepath, mode='w', geotransform=self.gt, spatialref=self.sref.wkt)
+                nc_file = NcFile(filepath, mode='w', geotrans=self.gt, sref=self.sref.wkt)
                 nc_file.write(self.xr_data[self.label][i, :, :].to_dataset().drop('time'))
                 nc_file.close()
 

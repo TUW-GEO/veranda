@@ -712,11 +712,13 @@ class RasterData(metaclass=abc.ABCMeta):
                 bands = list(self._data.keys())
             else:
                 bands = [band]
-            data_ar = self._data[bands[0]][slices]
-            data = data_ar.to_dataset()
-            for band in bands[1:]:
+            data = None
+            for band in bands:
                 data_ar = self._data[band][slices]
-                data = data.merge(data_ar.to_dataset())
+                if data is None:
+                    data = data_ar.to_dataset()
+                else:
+                    data = data.merge(data_ar.to_dataset())
         else:
             err_msg = "Data type is not supported for accessing and decoding the data."
             raise Exception(err_msg)

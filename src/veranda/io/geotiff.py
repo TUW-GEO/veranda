@@ -412,8 +412,10 @@ class GeoTiffFile(object):
 
         if row is None and col is not None:
             row = 0
+            n_cols = self.shape[-1]
         elif row is not None and col is None:
             col = 0
+            n_rows = self.shape[-2]
 
         if bands is None:
             if row is None and col is None:

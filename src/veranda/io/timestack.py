@@ -22,7 +22,7 @@ import pandas as pd
 import xarray as xr
 import netCDF4
 
-from veranda.io.geotiff import GeoTiffFile, get_pixel_coords
+from veranda.io.geotiff import GeoTiffFile
 from veranda.io.netcdf import NcFile
 
 gdal_dtype = {"uint8": gdal.GDT_Byte,
@@ -48,7 +48,7 @@ r_gdal_dtype = {gdal.GDT_Byte: "byte",
 
 # TODO: define abstract base IO class
 
-class GeoTiffRasterTimeStack(object):
+class GeoTiffRasterStack(object):
 
     """
     A GeoTiffRasterTimeStack is a collection of GeoTiff files, which together
@@ -69,7 +69,7 @@ class GeoTiffRasterTimeStack(object):
         Set the block size for x dimension (default: 512).
     blockysize : int, optional
         Set the block size for y dimension (default: 512).
-    geotransform : tuple or list
+    geotrans : tuple or list
         Geotransform parameters (default (0, 1, 0, 0, 0, 1)).
         0: Top left x
         1: W-E pixel resolution
@@ -77,7 +77,7 @@ class GeoTiffRasterTimeStack(object):
         3: Top left y
         4: Rotation, 0 if image is "north up"
         5: N-S pixel resolution (negative value if North up)
-    spatialref : str
+    sref : str
         Coordinate Reference System (CRS) in Wkt form (default None).
     tags : dict, optional
         Meta data tags (default None).
@@ -87,14 +87,13 @@ class GeoTiffRasterTimeStack(object):
         When building the VRT stack the variable defines the band to be used.
     """
 
-    def __init__(self, mode='r', file_ts=None, out_path=None,
+    def __init__(self, filepath_df, mode='r', out_path=None,
                  compression='LZW', blockxsize=512, blockysize=512,
-                 geotransform=(0, 1, 0, 0, 0, 1), spatialref=None,
-                 tags=None, gdal_opt=None, file_band=1):
+                 geotrans=(0, 1, 0, 0, 0, 1), sref=None,
+                 tags=None, gdal_opt=None):
 
         self.mode = mode
-        self.file_ts = file_ts
-        self.file_band = file_band
+        self.inventory = filepath_df
         self.vrt = None
 
         self.out_path = out_path
@@ -102,8 +101,8 @@ class GeoTiffRasterTimeStack(object):
         self.compression = compression
         self.blockxsize = blockxsize
         self.blockysize = blockysize
-        self.geotransform = geotransform
-        self.spatialref = spatialref
+        self.geotransform = geotrans
+        self.spatialref = sref
         self.tags = tags
         self.gdal_opt = gdal_opt
 
@@ -111,12 +110,12 @@ class GeoTiffRasterTimeStack(object):
         """
         Building vrt stack.
         """
-        if self.file_ts is not None:
+        if self.inventory is not None:
             path = tempfile.gettempdir()
             date_str = datetime.utcnow().strftime("%Y%m%d%H%M%S")
             tmp_filename = "{:}.vrt".format(date_str)
             vrt_filename = os.path.join(path, tmp_filename)
-            create_vrt_file(vrt_filename, self.file_ts['filenames'],
+            create_vrt_file(vrt_filename, self.inventory['filepath'],
                             band=self.file_band)
             self.vrt = gdal.Open(vrt_filename, gdal.GA_ReadOnly)
             self.spatialref = self.vrt.GetProjection()
@@ -325,61 +324,72 @@ class GeoTiffRasterTimeStack(object):
         return pd.DataFrame({'filenames': filenames}, index=time_stamps)
 
 
-def create_vrt_file(vrt_filename, file_list, nodata=None, band=1):
+def create_vrt_file(vrt_filepath, filepaths, nodatavals=None, bands=1):
     """
     Create a .VRT XML file. First file is used as master file.
 
     Parameters
     ----------
-    vrt_filename : str
+    vrt_filepath : str
         VRT filename.
-    file_list : list
+    filepaths : list
         List of files to include in the VRT.
     nodata : float, optional
         No data value (default: None).
     band : int, optional
         Band of the input file (default: 1)
     """
+    n_filepaths = len(filepaths)
+    if not isinstance(bands, list):
+        bands = [bands] * n_filepaths
+    else:
+        n_bands = len(bands)
+        if n_bands != n_filepaths:
+            err_msg = "Number of bands ({}) and number of file paths ({}) mismatch.".format(n_bands, n_filepaths)
+            raise ValueError(err_msg)
 
-    src = gdal.Open(file_list[0])
-    proj = src.GetProjection()
-    geot = src.GetGeoTransform()
-    xsize = src.RasterXSize
-    ysize = src.RasterYSize
-    dtype = src.GetRasterBand(band).DataType
+    if nodatavals is not None:
+        if not isinstance(nodatavals, list):
+            nodatavals = [nodatavals] * n_filepaths
+
+    src = gdal.Open(filepaths[0])
+    sref = src.GetProjection()
+    geotrans = src.GetGeoTransform()
+    n_cols = src.RasterXSize
+    n_rows = src.RasterYSize
+    dtype = src.GetRasterBand(bands[0]).DataType
     src = None
 
-    attrib = {"rasterXSize": str(xsize), "rasterYSize": str(ysize)}
+    attrib = {"rasterXSize": str(n_cols), "rasterYSize": str(n_rows)}
     vrt_root = ET.Element("VRTDataset", attrib=attrib)
 
     geot_elem = ET.SubElement(vrt_root, "GeoTransform")
-    geot_elem.text = ",".join(map(str, geot))
+    geot_elem.text = ",".join(map(str, geotrans))
 
     geot_elem = ET.SubElement(vrt_root, "SRS")
-    geot_elem.text = proj
+    geot_elem.text = sref
 
-    for i, filename in enumerate(file_list):
-
+    for i in range(n_filepaths):
         attrib = {"dataType": r_gdal_dtype[dtype], "band": str(i + 1)}
         band_elem = ET.SubElement(vrt_root, "VRTRasterBand", attrib=attrib)
         simsrc_elem = ET.SubElement(band_elem, "SimpleSource")
         attrib = {"relativetoVRT": "0"}
         file_elem = ET.SubElement(simsrc_elem, "SourceFilename", attrib=attrib)
-        file_elem.text = filename
-        ET.SubElement(simsrc_elem, "SourceBand").text = str(band)
+        file_elem.text = filepaths[i]
+        ET.SubElement(simsrc_elem, "SourceBand").text = str(bands[i])
 
-        attrib = {"RasterXSize": str(xsize), "RasterYSize": str(ysize),
+        attrib = {"RasterXSize": str(n_cols), "RasterYSize": str(n_rows),
                   "DataType": r_gdal_dtype[dtype], "BlockXSize": str(512),
                   "BlockYSize": str(512)}
 
         file_elem = ET.SubElement(simsrc_elem, "SourceProperties",
                                   attrib=attrib)
 
-        if nodata:
-            ET.SubElement(band_elem, "NodataValue").text = str(nodata)
+        if nodatavals is not None:
+            ET.SubElement(band_elem, "NodataValue").text = str(nodatavals[i])
 
     tree = ET.ElementTree(vrt_root)
-    tree.write(vrt_filename, encoding="UTF-8")
+    tree.write(vrt_filepath, encoding="UTF-8")
 
 
 class NcRasterTimeStack(object):
@@ -528,8 +538,8 @@ class NcRasterTimeStack(object):
 
             with NcFile(full_filename, mode=mode,
                         complevel=self.compression,
-                        geotransform=self.geotransform,
-                        spatialref=self.spatialref,
+                        geotrans=self.geotransform,
+                        sref=self.spatialref,
                         chunksizes=self.chunksizes) as nc:
                 nc.write(ds)
 
@@ -556,8 +566,8 @@ class NcRasterTimeStack(object):
 
                 with NcFile(full_filename, mode=mode,
                             complevel=self.compression,
-                            geotransform=self.geotransform,
-                            spatialref=self.spatialref,
+                            geotrans=self.geotransform,
+                            sref=self.spatialref,
                             chunksizes=self.chunksizes) as nc:
                     nc.write(ds.isel(time=time_sel))
 
