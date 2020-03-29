@@ -114,7 +114,7 @@ class GeoTiffFileTest(unittest.TestCase):
 
         with GeoTiffFile(self.filepath) as src:
             for band in np.arange(data.shape[0]):
-                ds = src.read(bands=band + 1)
+                ds = src.read(band=band + 1)
                 np.testing.assert_array_equal(
                     ds, data[band, :, :])
 
@@ -129,9 +129,9 @@ class GeoTiffFileTest(unittest.TestCase):
             src.write(data, band=10)
 
         with GeoTiffFile(self.filepath) as src:
-            ds = src.read(bands=5)
+            ds = src.read(band=5)
             np.testing.assert_array_equal(ds, data)
-            ds = src.read(bands=10)
+            ds = src.read(band=10)
             np.testing.assert_array_equal(ds, data)
 
     def test_tags(self):

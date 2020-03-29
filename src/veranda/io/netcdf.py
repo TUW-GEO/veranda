@@ -197,7 +197,7 @@ class NcFile(object):
                                         ('spatial_ref', self.sref),
                                         ('GeoTransform', geotrans)])
                 else:
-                    self.gm_name = None
+                    self.gm_name = "None"
                     geotrans = "{:} {:} {:} {:} {:} {:}".format(
                         self.geotrans[0], self.geotrans[1],
                         self.geotrans[2], self.geotrans[3],
@@ -263,7 +263,7 @@ class NcFile(object):
             else:
                 self.shape = (self.src.dimensions['y'].size, self.src.dimensions['x'].size)
 
-    def write(self, ds, nodatavals=None, encoder=None, encoder_kwargs=None, auto_scale=False):
+    def write(self, ds, band=None, nodataval=None, encoder=None, encoder_kwargs=None, auto_scale=False):
         """
         Write data into netCDF4 file.
 
@@ -278,10 +278,10 @@ class NcFile(object):
         bands = list(set(ds.variables.keys()) - set(['time', 'x', 'y']))
         n_bands = len(bands)
 
-        if nodatavals is not None and not isinstance(nodatavals, list):
-            nodatavals = [nodatavals] * n_bands
-        elif nodatavals is None:
-            nodatavals = [-9999] * n_bands  # TODO: how should the default behaviour be here?
+        if nodataval is not None and not isinstance(nodataval, list):
+            nodataval = [nodataval] * n_bands
+        elif nodataval is None:
+            nodataval = [-9999] * n_bands  # TODO: how should the default behaviour be here?
 
         # open file and create dimensions and coordinates
         if self.src is None:
@@ -328,7 +328,7 @@ class NcFile(object):
                 if self.gm_name is not None:
                     self.src_var[band].setncattr('grid_mapping', self.gm_name)
 
-            encoded_data = encoder(ds[band].data, nodataval=nodatavals[i], **encoder_kwargs) \
+            encoded_data = encoder(ds[band].data, nodataval=nodataval[i], **encoder_kwargs) \
                 if encoder is not None else ds[band].data
             if n_dims == 3:
                 self.src_var[band][append_start:, :, :] = encoded_data

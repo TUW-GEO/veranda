@@ -19,16 +19,17 @@ import os
 import shutil
 import unittest
 from tempfile import mkdtemp
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
 import xarray as xr
 
-from veranda.timestack import GeoTiffRasterTimeStack
-from veranda.timestack import NcRasterTimeStack
+from veranda.io.stack import GeoTiffRasterStack
+from veranda.io.stack import NcRasterStack
 
 
-class GeoTiffRasterTimeStackTest(unittest.TestCase):
+class GeoTiffRasterStackTest(unittest.TestCase):
 
     """
     Testing Geotiff image stack.
@@ -51,19 +52,19 @@ class GeoTiffRasterTimeStackTest(unittest.TestCase):
         xsize = 60
         ysize = 50
 
-        dims = ['time', 'x', 'y']
+        dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=num_files)}
-        data = np.random.randn(num_files, xsize, ysize)
+        data = np.random.randn(num_files, ysize, xsize)
         ds = xr.Dataset({'data': (dims, data)}, coords=coords)
 
-        with GeoTiffRasterTimeStack(mode='w', out_path=self.path) as stack:
-            file_ts = stack.write(ds)
+        with GeoTiffRasterStack(mode='w') as stack:
+            inventory_dict = stack.write_from_xr(ds, self.path)
 
-        with GeoTiffRasterTimeStack(file_ts=file_ts['data']) as stack:
-            ts1 = stack.read_ts(0, 0, 10, 10)
-            ts2 = stack.read_ts(12, 10, 5, 5)
-            img1 = stack.read_img('2000-01-02')
-            img2 = stack.read_img('2000-02-08')
+        with GeoTiffRasterStack(inventory=inventory_dict['data']) as stack:
+            ts1 = stack.read(col=0, row=0, n_cols=10, n_rows=10)
+            ts2 = stack.read(col=12, row=10, n_cols=5, n_rows=5)
+            img1 = stack.read(idx=datetime(2000,1,2))
+            img2 = stack.read(idx=datetime(2000,2,8))
 
         self.assertEqual(ts1.shape, (num_files, 10, 10))
         np.testing.assert_equal(ts1, data[:, :10, :10])
@@ -71,13 +72,13 @@ class GeoTiffRasterTimeStackTest(unittest.TestCase):
         self.assertEqual(ts2.shape, (num_files, 5, 5))
         np.testing.assert_equal(ts2, data[:, 10:15, 12:17])
 
-        self.assertEqual(img1.shape, (xsize, ysize))
+        self.assertEqual(img1.shape, (ysize, xsize))
         np.testing.assert_equal(
-            img1, ds.sel(time='2000-01-02')['data'].values)
+            img1, ds.sel(time=datetime(2000,1,2))['data'].values)
 
-        self.assertEqual(img2.shape, (xsize, ysize))
+        self.assertEqual(img2.shape, (ysize, xsize))
         np.testing.assert_equal(
-            img2, ds.sel(time='2000-02-08')['data'].values)
+            img2, ds.sel(time=datetime(2000,2,8))['data'].values)
 
     def test_export_nc(self):
         """
@@ -87,22 +88,22 @@ class GeoTiffRasterTimeStackTest(unittest.TestCase):
         xsize = 60
         ysize = 50
 
-        dims = ['time', 'x', 'y']
+        dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=num_files)}
-        data = np.random.randn(num_files, xsize, ysize)
+        data = np.random.randn(num_files, ysize, xsize)
         ds = xr.Dataset({'data': (dims, data)}, coords=coords)
 
         # write .tif stack
-        with GeoTiffRasterTimeStack(mode='w', out_path=self.path) as stack:
-            file_ts = stack.write(ds)
+        with GeoTiffRasterStack(mode='w') as stack:
+            inventory = stack.write_from_xr(ds, self.path)
 
         # read and export .tif stack to .nc stack
-        with GeoTiffRasterTimeStack(file_ts=file_ts['data']) as stack:
-            file_ts = stack.export_to_nc(self.path)
+        with GeoTiffRasterStack(inventory=inventory['data'], mode='r') as stack:
+            inventory = stack.export_to_nc(self.path)
 
         # read .nc stack
-        with NcRasterTimeStack(file_ts=file_ts.drop_duplicates()) as stack:
-            nc_ds = stack.read()
+        with NcRasterStack(inventory=inventory.drop_duplicates()) as stack:
+            nc_ds = stack.read(band='data')
             np.testing.assert_equal(nc_ds['data'].values, ds['data'].values)
 
     def tearDown(self):
@@ -112,7 +113,7 @@ class GeoTiffRasterTimeStackTest(unittest.TestCase):
         shutil.rmtree(self.path)
 
 
-class NcRasterTimeStackTest(unittest.TestCase):
+class NcRasterStackTest(unittest.TestCase):
 
     """
     Testing NetCDF image stack.
@@ -132,29 +133,29 @@ class NcRasterTimeStackTest(unittest.TestCase):
         xsize = 60
         ysize = 50
 
-        dims = ['time', 'x', 'y']
+        dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=num_files)}
-        data = np.random.randn(num_files, xsize, ysize)
+        data = np.random.randn(num_files, ysize, xsize)
         ds = xr.Dataset({'data': (dims, data)}, coords=coords)
 
-        with NcRasterTimeStack(mode='w', out_path=self.path) as stack:
-            file_ts = stack.write(ds)
+        with NcRasterStack(mode='w') as stack:
+            inventory = stack.write_netcdfs(ds, self.path)
 
-        with NcRasterTimeStack(file_ts=file_ts) as stack:
-            ts = stack.read()
+        with NcRasterStack(inventory=inventory) as stack:
+            ts = stack.read(band='data')
 
-            np.testing.assert_equal(ts['data'][:, 0:10, 0:10].values,
+            np.testing.assert_equal(ts['data'][:, :10, :10].values,
                                     data[:, :10, :10])
 
-            np.testing.assert_equal(ts['data'][:, 10:15, 12:17],
+            np.testing.assert_equal(ts['data'][:, 10:15, 12:17].values,
                                     data[:, 10:15, 12:17])
 
             np.testing.assert_equal(
-                ts['data'][1, :, :].values,
+                ts['data'][1, :, :],
                 ds.sel(time='2000-01-02')['data'].values)
 
             np.testing.assert_equal(
-                ts['data'][38, :, :].values,
+                ts['data'][38, :, :],
                 ds.sel(time='2000-02-08')['data'].values)
 
     def test_write_read_image_stack_single_nc(self):
@@ -165,18 +166,18 @@ class NcRasterTimeStackTest(unittest.TestCase):
         xsize = 60
         ysize = 50
 
-        dims = ['time', 'x', 'y']
+        dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=num_files)}
-        data = np.random.randn(num_files, xsize, ysize)
+        data = np.random.randn(num_files, ysize, xsize)
         ds = xr.Dataset({'data': (dims, data)}, coords=coords)
 
-        with NcRasterTimeStack(
-                mode='w', out_path=self.path, stack_size='single',
-                fn_prefix='single') as stack:
-            file_ts = stack.write(ds)
+        with NcRasterStack(mode='w') as stack:
+            filepath = os.path.join(self.path, "single.nc")
+            stack.write(ds, filepath)
 
-        with NcRasterTimeStack(file_ts=file_ts) as stack:
-            ts = stack.read()
+        inventory = pd.DataFrame({'filepath': [filepath]})
+        with NcRasterStack(inventory=inventory) as stack:
+            ts = stack.read(band='data')
 
             np.testing.assert_equal(ts['data'][:, 0:10, 0:10].values,
                                     data[:, :10, :10])
@@ -200,23 +201,23 @@ class NcRasterTimeStackTest(unittest.TestCase):
         xsize = 60
         ysize = 50
 
-        dims = ['time', 'x', 'y']
+        dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=num_files)}
-        data = np.random.randn(num_files, xsize, ysize)
+        data = np.random.randn(num_files, ysize, xsize)
         ds = xr.Dataset({'data': (dims, data)}, coords=coords)
 
         # write .nc stack
-        with NcRasterTimeStack(mode='w', out_path=self.path) as stack:
-            file_ts = stack.write(ds)
+        with NcRasterStack(mode='w') as stack:
+            inventory = stack.write_netcdfs(ds, self.path)
 
         # read and export .nc stack to .tif stack
-        with NcRasterTimeStack(file_ts=file_ts) as stack:
-            file_ts = stack.export_to_tif(self.path, 'data')
+        with NcRasterStack(inventory=inventory) as stack:
+            inventory = stack.export_to_tif(self.path, 'data')
 
         # read .tif stack
-        with GeoTiffRasterTimeStack(file_ts=file_ts) as stack:
-            img1 = stack.read_img('2000-01-02')
-            img2 = stack.read_img('2000-02-08')
+        with GeoTiffRasterStack(inventory=inventory) as stack:
+            img1 = stack.read(idx=datetime(2000,1,2))
+            img2 = stack.read(idx=datetime(2000,2,8))
 
         np.testing.assert_equal(img1,
                                 ds.sel(time='2000-01-02')['data'].values)

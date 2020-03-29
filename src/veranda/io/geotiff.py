@@ -325,7 +325,7 @@ class GeoTiffFile(object):
             Data type.
         """
         if self.mode == 'w':
-            self.src = self.driver.Create(self.filepath, n_rows, n_cols,
+            self.src = self.driver.Create(self.filepath, n_cols, n_rows,
                                           n_bands, gdal_dtype[dtype],
                                           self.gdal_opt)
 
@@ -373,7 +373,7 @@ class GeoTiffFile(object):
         if self.src is None:
             raise IOError("Open failed: %s".format(self.filepath))
 
-    def read(self, row=None, col=None, n_rows=1, n_cols=1, bands=None, nodatavals=None,
+    def read(self, row=None, col=None, n_rows=1, n_cols=1, band=None, nodataval=None,
              decoder=None, decoder_kwargs=None):
         """
         Read data from raster file.
@@ -390,9 +390,9 @@ class GeoTiffFile(object):
             Number of rows to read (default is 1).
         n_cols : int, optional
             Number of columns to read (default is 1).
-        bands : int or list of int, optional
+        band : int or list of int, optional
             Band numbers (starting with 1). If None, all bands will be read.
-        nodatavals : tuple or list, optional
+        nodataval : tuple or list, optional
             List of no data values for each band.
             Default: -9999 for each band.
         decoder : function, optional
@@ -405,8 +405,8 @@ class GeoTiffFile(object):
         data : numpy.ndarray
             Data set.
         """
-        if nodatavals is not None and not isinstance(nodatavals, list):
-            nodatavals = [nodatavals]
+        if nodataval is not None and not isinstance(nodataval, list):
+            nodataval = [nodataval]
 
         decoder_kwargs = {} if decoder_kwargs is None else decoder_kwargs
 
@@ -417,25 +417,25 @@ class GeoTiffFile(object):
             col = 0
             n_rows = self.shape[-2]
 
-        if bands is None:
+        if band is None:
             if row is None and col is None:
                 data = self.src.ReadAsArray()
             else:
                 data = self.src.ReadAsArray(col, row, n_cols, n_rows)
 
             if decoder is not None:
-                if nodatavals is None:
-                    nodatavals = [-9999]
-                data = decoder(data, nodataval=nodatavals[0], **decoder_kwargs)
+                if nodataval is None:
+                    nodataval = [-9999]
+                data = decoder(data, nodataval=nodataval[0], **decoder_kwargs)
         else:
-            if not isinstance(bands, list):
-                bands = [bands]
+            if not isinstance(band, list):
+                band = [band]
 
-            if nodatavals is None:
-                nodatavals = [-9999] * len(bands)
+            if nodataval is None:
+                nodataval = [-9999] * len(band)
 
             data_list = []
-            for i, band in enumerate(bands):
+            for i, band in enumerate(band):
                 gdal_band = self.src.GetRasterBand(int(band))
                 if gdal_band is None:
                     raise IOError("Reading band {:} failed.".format(band))
@@ -444,7 +444,7 @@ class GeoTiffFile(object):
                 else:
                     data = gdal_band.ReadAsArray(col, row, n_cols, n_rows)
                 if decoder is not None:
-                    data_list.append(decoder(data, nodataval=nodatavals[i], **decoder_kwargs))
+                    data_list.append(decoder(data, nodataval=nodataval[i], **decoder_kwargs))
                 else:
                     data_list.append(data)
 
@@ -489,8 +489,7 @@ class GeoTiffFile(object):
 
         return tags
 
-    # TODO: band -> bands?
-    def write(self, data, band=None, encoder=None, nodatavals=None, encoder_kwargs=None, ct=None):
+    def write(self, data, band=None, encoder=None, nodataval=None, encoder_kwargs=None, ct=None):
         """
         Write data into raster file.
 
@@ -508,13 +507,14 @@ class GeoTiffFile(object):
             Encoding function expecting a NumPy array as input.
         encoder_kwargs : dict, optional
             Keyword arguments for the encoder.
-        nodatavals : tuple or list, optional
+        nodataval : tuple or list, optional
             List of no data values for each band.
             Default: -9999 for each band.
         ct : tuple or list, optional
             List of color tables for each band.
             Default: No color tables set.
         """
+
         if not self.overwrite and os.path.exists(self.filepath):
             raise RuntimeError("File exists {:}".format(self.filepath))
 
@@ -530,10 +530,10 @@ class GeoTiffFile(object):
             err_msg = "Only 2d or 3d arrays are supported"
             raise ValueError(err_msg)
 
-        if nodatavals is not None and not isinstance(nodatavals, list):
-            nodatavals = [nodatavals] * n_data_layers
-        elif nodatavals is None:
-            nodatavals = [-9999] * n_data_layers
+        if nodataval is not None and not isinstance(nodataval, list):
+            nodataval = [nodataval] * n_data_layers
+        elif nodataval is None:
+            nodataval = [-9999] * n_data_layers
 
         if not isinstance(ct, list):
             ct = [ct] * n_data_layers
@@ -563,41 +563,37 @@ class GeoTiffFile(object):
                 raise ValueError(err_msg)
 
         if band is None:
-            if data.ndim != 3:  # TODO: this statement wont be reached anymore, delete it?
-                err_msg = "Array needs to have 3 dimensions [band, height, width]"
-                raise ValueError(err_msg)
-            else:
-                for b in range(n_data_layers):
-                    band = int(b + 1)
-                    if encoder is not None:
-                        self.src.GetRasterBand(band).WriteArray(encoder(data[b, :, :],
-                                                                        nodataval=nodatavals[b],
-                                                                        **encoder_kwargs))
-                    else:
-                        self.src.GetRasterBand(band).WriteArray(data[b, :, :])
-                    self.src.GetRasterBand(band).SetNoDataValue(nodatavals[b])
-                    if ct[b] is not None:
-                        self.src.GetRasterBand(band).SetRasterColorTable(ct[b])
-                    else:
-                        # helps to view layers e.g. as quicklooks  #TODO: @bbm why 2? Document it.
-                        self.src.GetRasterBand(band).SetRasterColorInterpretation(2)
+            for b in range(n_data_layers):
+                band = int(b + 1)
+                if encoder is not None:
+                    self.src.GetRasterBand(band).WriteArray(encoder(data[b, :, :],
+                                                                    nodataval=nodataval[b],
+                                                                    **encoder_kwargs))
+                else:
+                    self.src.GetRasterBand(band).WriteArray(data[b, :, :])
+                self.src.GetRasterBand(band).SetNoDataValue(nodataval[b])
+                if ct[b] is not None:
+                    self.src.GetRasterBand(band).SetRasterColorTable(ct[b])
+                else:
+                    # helps to view layers e.g. as quicklooks  #TODO: @bbm why 2? Document it.
+                    self.src.GetRasterBand(band).SetRasterColorInterpretation(2)
         else:
             if band > self.n_bands:
                 err_msg = "Band number ({}) is larger than number of bands ({})".format(band, self.n_bands)
                 raise ValueError(err_msg)
             band = int(band)
             if data.ndim != 2:
-                msg = "Array needs to have 2 dimensions [height, width]"
-                raise ValueError(msg)
+                err_msg = "Array needs to have 2 dimensions [height, width]"
+                raise ValueError(err_msg)
             else:
                 if encoder is not None:
-                    # nodatavals only first element is needed, because only one band is given
-                    self.src.GetRasterBand(band).WriteArray(encoder(data, nodataval=nodatavals[0], **encoder_kwargs))
+                    # nodataval only first element is needed, because only one band is given
+                    self.src.GetRasterBand(band).WriteArray(encoder(data, nodataval=nodataval[0], **encoder_kwargs))
                 else:
                     self.src.GetRasterBand(band).WriteArray(data)
 
-                if nodatavals is not None:
-                    self.src.GetRasterBand(band).SetNoDataValue(nodatavals[0])
+                if nodataval is not None:
+                    self.src.GetRasterBand(band).SetNoDataValue(nodataval[0])
                 if ct[0] is not None:
                     self.src.GetRasterBand(band).SetRasterColorTable(ct[0])
                 else:
