@@ -21,9 +21,9 @@ from tempfile import mkdtemp
 
 import numpy as np
 
-from veranda.geotiff import read_tiff
-from veranda.geotiff import write_tiff
-from veranda.geotiff import GeoTiffFile
+from veranda.io.geotiff import read_tiff
+from veranda.io.geotiff import write_tiff
+from veranda.io.geotiff import GeoTiffFile
 
 
 class GeotiffTest(unittest.TestCase):
@@ -87,7 +87,7 @@ class GeoTiffFileTest(unittest.TestCase):
         """
         Set up dummy data set.
         """
-        self.filename = os.path.join(mkdtemp(), 'test.tif')
+        self.filepath = os.path.join(mkdtemp(), 'test.tif')
 
     def test_read_write_1_band(self):
         """
@@ -95,11 +95,11 @@ class GeoTiffFileTest(unittest.TestCase):
         """
         data = np.ones((1, 100, 100), dtype=np.float32)
 
-        with GeoTiffFile(self.filename, mode='w') as src:
+        with GeoTiffFile(self.filepath, mode='w') as src:
             src.write(data)
 
-        with GeoTiffFile(self.filename) as src:
-            ds, tags = src.read()
+        with GeoTiffFile(self.filepath) as src:
+            ds = src.read()
 
         np.testing.assert_array_equal(ds, data[0, :, :])
 
@@ -109,12 +109,12 @@ class GeoTiffFileTest(unittest.TestCase):
         """
         data = np.ones((5, 100, 100), dtype=np.float32)
 
-        with GeoTiffFile(self.filename, mode='w') as src:
+        with GeoTiffFile(self.filepath, mode='w') as src:
             src.write(data)
 
-        with GeoTiffFile(self.filename) as src:
+        with GeoTiffFile(self.filepath) as src:
             for band in np.arange(data.shape[0]):
-                ds, tags = src.read(band + 1)
+                ds = src.read(band=band + 1)
                 np.testing.assert_array_equal(
                     ds, data[band, :, :])
 
@@ -124,14 +124,14 @@ class GeoTiffFileTest(unittest.TestCase):
         """
         data = np.ones((100, 100), dtype=np.float32)
 
-        with GeoTiffFile(self.filename, mode='w', count=10) as src:
+        with GeoTiffFile(self.filepath, mode='w', n_bands=10) as src:
             src.write(data, band=5)
             src.write(data, band=10)
 
-        with GeoTiffFile(self.filename) as src:
-            ds, tags = src.read(5)
+        with GeoTiffFile(self.filepath) as src:
+            ds = src.read(band=5)
             np.testing.assert_array_equal(ds, data)
-            ds, tags = src.read(10)
+            ds = src.read(band=10)
             np.testing.assert_array_equal(ds, data)
 
     def test_tags(self):
@@ -143,11 +143,11 @@ class GeoTiffFileTest(unittest.TestCase):
         metadata = {'attr1': '123', 'attr2': 'test'}
         tags = {'description': 'helloworld', 'metadata': metadata}
 
-        with GeoTiffFile(self.filename, mode='w', tags=tags) as src:
+        with GeoTiffFile(self.filepath, mode='w', tags=tags) as src:
             src.write(data)
 
-        with GeoTiffFile(self.filename) as src:
-            ds, ds_tags = src.read(1)
+        with GeoTiffFile(self.filepath) as src:
+            ds_tags = src.read_tags(1)
 
         self.assertEqual(ds_tags['metadata'], tags['metadata'])
         self.assertNotEqual(ds_tags['description'], tags['description'])
@@ -162,8 +162,8 @@ class GeoTiffFileTest(unittest.TestCase):
         """
         data = np.ones((1, 100, 100), dtype=np.float32)
 
-        geotransform = (3000000.0, 500.0, 0.0, 1800000.0, 0.0, -500.0)
-        spatialref = ('PROJCS["Azimuthal_Equidistant",GEOGCS["WGS 84",'
+        geotrans = (3000000.0, 500.0, 0.0, 1800000.0, 0.0, -500.0)
+        sref = ('PROJCS["Azimuthal_Equidistant",GEOGCS["WGS 84",'
                      'DATUM["WGS_1984",SPHEROID["WGS 84",6378137,'
                      '298.257223563,AUTHORITY["EPSG","7030"]],'
                      'AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0],'
@@ -176,39 +176,19 @@ class GeoTiffFileTest(unittest.TestCase):
                      'PARAMETER["false_northing",2121415.69617],'
                      'UNIT["metre",1,AUTHORITY["EPSG","9001"]]]')
 
-        with GeoTiffFile(self.filename, mode='w', geotransform=geotransform,
-                         spatialref=spatialref) as src:
+        with GeoTiffFile(self.filepath, mode='w', geotrans=geotrans, sref=sref) as src:
             src.write(data)
 
-        with GeoTiffFile(self.filename) as src:
-            ds, ds_tags = src.read(1)
+        with GeoTiffFile(self.filepath) as src:
+            ds_tags = src.read_tags(1)
 
-        self.assertEqual(ds_tags['geotransform'], geotransform)
-
-    def test_getitem(self):
-        """
-        Test getitem implementation.
-        """
-        data = np.ones((100, 100), dtype=np.float32)
-
-        with GeoTiffFile(self.filename, mode='w', count=10) as src:
-            src[5] = data
-            src[8:11] = np.repeat(data[np.newaxis, :, :], 3, axis=0)
-
-        with GeoTiffFile(self.filename) as src:
-            ds = src[5, 10:15, 27:39]
-            np.testing.assert_array_equal(
-                ds, data[np.newaxis, 10:15, 27:39])
-            ds = src[8:11, 10:28, 10:15]
-            np.testing.assert_array_equal(
-                ds, np.repeat(data[np.newaxis, 10:28, 10:15], 3, axis=0))
-
+        self.assertEqual(ds_tags['geotransform'], geotrans)
 
     def tearDown(self):
         """
         Remove test file.
         """
-        os.remove(self.filename)
+        os.remove(self.filepath)
 
 
 if __name__ == '__main__':

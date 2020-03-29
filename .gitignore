@@ -51,3 +51,5 @@ MANIFEST
 
 # user defined
 .scripts
+dump.py
+tests/tmp
