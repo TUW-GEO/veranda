@@ -131,9 +131,9 @@ class GeoTiffRasterStack:
             date_str = datetime.utcnow().strftime("%Y%m%d%H%M%S")
             tmp_filename = "{:}.vrt".format(date_str)
             vrt_filepath = os.path.join(path, tmp_filename)
-            filepaths = [filepath for filepath in inventory['filepath'] if filepath is not None]
-            bands = 1 if "band" not in inventory.keys() else list(inventory['band'])  # take first band as a default
-            nodatavals = -9999 if "nodataval" not in inventory.keys() else list(inventory['nodataval'])  # take -9999 as a default no data value
+            filepaths = self.inventory.dropna()['filepath'].to_list()
+            bands = 1 if "band" not in inventory.keys() else self.inventory.dropna()['band'].to_list()  # take first band as a default
+            nodatavals = -9999 if "nodataval" not in inventory.keys() else self.inventory.dropna()['nodataval'].to_list()   # take -9999 as a default no data value
             create_vrt_file(vrt_filepath, filepaths, bands=bands, geotrans=self.geotrans, n_cols=self.shape[2],
                             n_rows=self.shape[1], dtype=self.dtype, sref=self.sref, nodatavals=nodatavals)
             return gdal.Open(vrt_filepath, gdal.GA_ReadOnly)
@@ -209,10 +209,31 @@ class GeoTiffRasterStack:
         if decoder is not None:
             data = decoder(data, nodataval=nodataval, **decoder_kwargs)
 
-        return data
+        return self._fill_nan(data)
 
-    def __fill_nan(self, data):
-        return data
+    def _fill_nan(self, data):
+        """
+        Extends data set with nan values where no file paths are available in the inventory.
+
+        Parameters
+        ----------
+        data : numpy.ndarray
+            3D NumPy data set.
+
+        Returns
+        -------
+        numpy.ndarray
+            3D NumPy data set and NaN values where no file path is given in the inventory.
+        """
+        if None in self.inventory['filepath'].to_list():
+            n_entries = len(self.inventory)
+            ext_data = np.ones((n_entries, data.shape[-2], data.shape[-1]))*np.nan
+            # get indexes of non nan/None data layers
+            idxs = np.arange(n_entries)[self.inventory['filepath'].notnull()]
+            ext_data[idxs, :, :] = data
+            return ext_data
+        else:
+            return data
 
     def write(self, data, filepath, band=None, encoder=None, nodataval=None, encoder_kwargs=None, ct=None):
         """
@@ -387,12 +408,13 @@ def create_vrt_file(vrt_filepath, filepaths, nodatavals=None, bands=1, sref=None
     geot_elem.text = sref
 
     for i in range(n_filepaths):
+        filepath = filepaths[i]
         attrib = {"dataType": dtype.lower(), "band": str(i + 1)}
         band_elem = ET.SubElement(vrt_root, "VRTRasterBand", attrib=attrib)
         simsrc_elem = ET.SubElement(band_elem, "SimpleSource")
         attrib = {"relativetoVRT": "0"}
         file_elem = ET.SubElement(simsrc_elem, "SourceFilename", attrib=attrib)
-        file_elem.text = filepaths[i]
+        file_elem.text = filepath
         ET.SubElement(simsrc_elem, "SourceBand").text = str(bands[i])
 
         attrib = {"RasterXSize": str(n_cols), "RasterYSize": str(n_rows),
@@ -490,7 +512,7 @@ class NcRasterStack:
         """
         if self.inventory is not None:
             self.mfdataset = xr.open_mfdataset(
-                self.inventory['filepath'].tolist(), chunks=self.chunks, combine='by_coords')
+                self.inventory.dropna()['filepath'].tolist(), chunks=self.chunks, combine='by_coords')
         else:
             raise RuntimeError('Building stack failed')
 
@@ -523,8 +545,8 @@ class NcRasterStack:
 
         Returns
         -------
-        data : xarray.Dataset or netCDF4.variables
-            Data stored in NetCDF file. Data type depends on read mode.
+        data : xarray.Dataset
+            Data set with the dimensions [time, y, x] and one data variable.
         """
 
         decoder_kwargs = {} if decoder_kwargs is None else decoder_kwargs
@@ -555,10 +577,34 @@ class NcRasterStack:
             timestamps = netCDF4.num2date(data['time'], self.time_units)
             data = data.assign_coords({'time': timestamps})
 
-        return data
+        return self._fill_nan(data)
 
-    def __fill_nan(self):
-        pass
+    # ToDO: rechunk?
+    def _fill_nan(self, data):
+        """
+        Extends data set with nan values where data and inventory time stamps mismatch.
+
+        Parameters
+        ----------
+        data : xarray.Dataset
+            Data set with the dimensions [time, y, x].
+
+        Returns
+        -------
+        xarray.Dataset
+            Data set with the dimensions [time, y, x] and NaN values where no filepath is given in the inventory.
+
+        Notes
+        -----
+        Sorting along time is applied.
+        """
+        if None in self.inventory['filepath'].to_list():
+            timestamps = data['time'].to_index().tolist()
+            nan_timestamps = self.inventory.index[~self.inventory['filepath'].notnull()].to_list()  # get all timestamps which do not contain data
+            timestamps.extend(nan_timestamps)
+            return data.reindex(time=sorted(timestamps))
+        else:
+            return data
 
     def iter_img(self, var_name):
         """
@@ -588,8 +634,11 @@ class NcRasterStack:
         index = np.hstack((index, len(dup_stack_filenames)))
 
         filepaths = []
+        timestamps = []
         for i, stack_filename in enumerate(stack_filenames):
             time_sel = np.arange(index[i], index[i + 1])
+            timestamp = datetime.strptime(ds['time'][[index[i]]].to_index().strftime(stack_size)[0], stack_size)
+            timestamps.append(timestamp)
             filename = '{:}{:}{:}'.format(fn_prefix, stack_filename, fn_suffix)
             filepath = os.path.join(dir_path, filename)
             filepaths.append(filepath)
@@ -606,7 +655,7 @@ class NcRasterStack:
                         chunksizes=self.chunksizes) as nc:
                 nc.write(ds.isel(time=time_sel))
 
-        return pd.DataFrame({'filepath': filepaths})
+        return pd.DataFrame({'filepath': filepaths}, index=timestamps)
 
     def write(self, ds, filepath, band=None, encoder=None, nodataval=None, encoder_kwargs=None, auto_scale=False):
         """
