@@ -15,8 +15,8 @@ from collections import OrderedDict
 
 from veranda.io.geotiff import GeoTiffFile
 from veranda.io.netcdf import NcFile
-from veranda.io.timestack import GeoTiffRasterTimeStack
-from veranda.io.timestack import NcRasterTimeStack
+from veranda.io.stack import GeoTiffRasterStack
+from veranda.io.stack import NcRasterStack
 from veranda.plot import RasterStackSlider
 
 from veranda.errors import DataTypeMismatch
@@ -71,6 +71,7 @@ def convert_data_coding(data, coder, coder_kwargs=None, band=None):
 
 
 # TODO: where should we put this?
+# TODO: create grid mapping name with it?
 def convert_data_type(data, *coord_args, data_type="numpy", band=None, dim_names=None):
     """
     Converts `data` into an array-like object defined by `data_type`. It accepts NumPy arrays or Xarray data sets and
@@ -100,15 +101,19 @@ def convert_data_type(data, *coord_args, data_type="numpy", band=None, dim_names
     numpy.ndarray or xarray.Dataset
         Array-like object containing image pixel values.
     """
-    if dim_names is None:
-        dim_names = ['y', 'x', 'time']
 
     n_coord_args = len(coord_args)
-    n_dim_names = len(dim_names)
-    if n_coord_args != n_dim_names:
-        err_msg = "Number of coordinate arguments ({}) " \
-                  "does not match number of dimension names ({}).".format(n_coord_args, n_dim_names)
-        raise Exception(err_msg)
+    if dim_names is None:
+        if n_coord_args == 2:
+            dim_names = ['y', 'x']
+        elif n_coord_args == 3:
+            dim_names = ['time', 'y', 'x']
+    else:
+        n_dim_names = len(dim_names)
+        if n_coord_args != n_dim_names:
+            err_msg = "Number of coordinate arguments ({}) " \
+                      "does not match number of dimension names ({}).".format(n_coord_args, n_dim_names)
+            raise Exception(err_msg)
 
     if data_type == "xarray":
         if isinstance(data, np.ndarray):
@@ -155,7 +160,7 @@ class RasterData(metaclass=abc.ABCMeta):
     At the moment `RasterData` offers all basic functionalities for the child classes `RasterLayer` and `RasterStack`.
     """
 
-    def __init__(self, n_rows, n_cols, sref, geotrans, data=None, data_type="numpy", io=None, label=None, parent=None):
+    def __init__(self, n_rows, n_cols, sref, geotrans, data=None, dtype="numpy", io=None, label=None, parent=None):
         """
         Basic constructor of class `RasterData`.
 
@@ -171,7 +176,7 @@ class RasterData(metaclass=abc.ABCMeta):
             GDAL geotransform tuple.
         data : numpy.ndarray or xarray.Dataset, optional
             Array-like object containing image pixel values.
-        data_type : str, optional
+        dtype : str, optional
             Data type of the returned array-like structure. It can be:
             - 'xarray': converts data to an xarray.Dataset
             - 'numpy': convert data to a numpy.ndarray (default)
@@ -189,7 +194,7 @@ class RasterData(metaclass=abc.ABCMeta):
         if data is not None:
             self._check_data(data)
         self._data = data
-        self.data_type = data_type
+        self.dtype = dtype
 
         self.io = io
         self.label = label
@@ -377,7 +382,7 @@ class RasterData(metaclass=abc.ABCMeta):
         else:
             return None
 
-    def load(self, band=None, io=None, read_kwargs=None, data_type=None, decode=True, decode_kwargs=None,
+    def load(self, band=None, io=None, read_kwargs=None, dtype=None, decode=True, decode_kwargs=None,
              inplace=False):
         """
         Reads data from disk and assigns the resulting array to the
@@ -392,7 +397,7 @@ class RasterData(metaclass=abc.ABCMeta):
             IO class instance.
         read_kwargs : dict, optional
             Keyword arguments for reading function of IO class.
-        data_type : str, optional
+        dtype : str, optional
             Data type of the returned array-like structure (default is None -> class variable `data_type` is used).
             It can be:
                 - 'xarray': loads data as an xarray.DataSet
@@ -417,7 +422,7 @@ class RasterData(metaclass=abc.ABCMeta):
             raise Exception(err_msg)
 
         read_kwargs = read_kwargs if read_kwargs is not None else {}
-        data_type = data_type if data_type is not None else self.data_type
+        dtype = dtype if dtype is not None else self.dtype
 
         if band is not None:
             read_kwargs.update({'band': band})
@@ -428,7 +433,7 @@ class RasterData(metaclass=abc.ABCMeta):
 
         if decode:
             read_kwargs.update({'decoder': self.decode})
-            read_kwargs.update({'decode_kwargs': decode_kwargs})
+            read_kwargs.update({'decoder_kwargs': decode_kwargs})
 
         data = io.read(**read_kwargs)
         if data is None:
@@ -440,26 +445,27 @@ class RasterData(metaclass=abc.ABCMeta):
         col = read_kwargs.pop("col", None)
         row = read_kwargs.pop("row", None)
         if col is not None and row is not None:  # cut geometry according to loaded data
-            col_size = read_kwargs.get("col_size", 1)
-            row_size = read_kwargs.get("row_size", 1)
-            max_row, max_col = row + row_size - 1, col + col_size - 1 # -1 because of Python indexing
-            px_extent = (row, max_row, col, max_col)
+            n_cols = read_kwargs.get("n_cols", 1)
+            n_rows = read_kwargs.get("n_rows", 1)
+            max_row, max_col = row + n_rows - 1, col + n_cols - 1 # -1 because of Python indexing
+            px_extent = (row, col, max_row, max_col)
             intsct_raster_geom = self.raster_geom.intersection_by_pixel(px_extent, inplace=False)
         else:
             intsct_raster_geom = self.raster_geom
 
-        data = self._convert_data_type(data=data, data_type=data_type, raster_geom=intsct_raster_geom)
+        data = self._convert_data_type(data=data, dtype=dtype, raster_geom=intsct_raster_geom)
         raster_data = self.from_array(intsct_raster_geom.sref, intsct_raster_geom.geotrans, data=data,
-                                      data_type=data_type, parent=self, io=self.io, label=self.label)
+                                      dtype=dtype, parent=self, io=self.io, label=self.label)
 
         if inplace:
-            self.data_type = raster_data.data_type
+            self.dtype = raster_data.dtype
             self._data = raster_data._data
             self.raster_geom = raster_data.raster_geom
+            return self
         else:
             return raster_data
 
-    def load_by_coords(self, x, y, sref=None, slices=None, band=None, data_type=None, px_origin="ul", decode=True,
+    def load_by_coords(self, x, y, sref=None, slices=None, band=None, dtype=None, px_origin="ul", decode=True,
                        decode_kwargs=None, inplace=False, **kwargs):
         """
         Reads data/one pixel according to the given coordinates.
@@ -479,7 +485,7 @@ class RasterData(metaclass=abc.ABCMeta):
         band : str or int, optional
             Defines a band or a data variable name. The default behaviour is to take `self.label`.
             If `self.label` is also None, then all available bands are loaded.
-        data_type : str, optional
+        dtype : str, optional
             Data type of the returned array-like structure (default is None -> class variable `data_type` is used).
             It can be:
                 - 'xarray': loads data as an xarray.DataSet
@@ -508,7 +514,7 @@ class RasterData(metaclass=abc.ABCMeta):
         """
 
         read_kwargs = kwargs.get("read_kwargs", {})
-        data_type = data_type if data_type is not None else self.data_type
+        dtype = dtype if dtype is not None else self.dtype
 
         poi = ogr.Geometry(ogr.wkbPoint)
         poi.AddPoint(x, y)
@@ -517,18 +523,18 @@ class RasterData(metaclass=abc.ABCMeta):
             if self._data is None or not self.raster_geom.within(poi, sref=sref): # maybe it does not intersect because part of data is not loaded
                 read_kwargs.update({"row": row})
                 read_kwargs.update({"col": col})
-                return self.load(band=band, read_kwargs=read_kwargs, data_type=data_type, inplace=inplace,
+                return self.load(band=band, read_kwargs=read_kwargs, dtype=dtype, inplace=inplace,
                                  decode=decode, decode_kwargs=decode_kwargs, **kwargs)
             else:
                 px_slices = (slice(row, row+1), slice(col, col+1))
-                return self._load_array(px_slices, slices=slices, band=band, data_type=data_type, inplace=inplace)
+                return self._load_array(px_slices, slices=slices, band=band, dtype=dtype, inplace=inplace)
         else:
             wrn_msg = "The given coordinates do not intersect with the raster."
             warnings.warn(wrn_msg)
             return self
 
     @_any_geom2ogr_geom
-    def load_by_geom(self, geom, sref=None, slices=None, band=None, data_type=None, apply_mask=False, decode=True,
+    def load_by_geom(self, geom, sref=None, slices=None, band=None, dtype=None, apply_mask=False, decode=True,
                      decode_kwargs=None, buffer=0, inplace=False, **kwargs):
         """
         Reads data according to the given geometry/region of interest.
@@ -546,7 +552,7 @@ class RasterData(metaclass=abc.ABCMeta):
         band : str or int, optional
             Defines a band or a data variable name. The default behaviour is to take `self.label`.
             If `self.label` is also None, then all available bands are loaded.
-        data_type : str, optional
+        dtype : str, optional
             Data type of the returned array-like structure (default is None -> class variable `data_type` is used).
             It can be:
                 - 'xarray': loads data as an xarray.DataSet
@@ -571,7 +577,7 @@ class RasterData(metaclass=abc.ABCMeta):
             `RasterData` object containing data referring to the given geometry.
         """
         read_kwargs = kwargs.get("read_kwargs", {})
-        data_type = data_type if data_type is not None else self.data_type
+        dtype = dtype if dtype is not None else self.dtype
 
         intsct_raster_geom = self.raster_geom & geom
         min_col, min_row, max_col, max_row = rel_extent((self.raster_geom.parent_root.ul_x,
@@ -579,25 +585,25 @@ class RasterData(metaclass=abc.ABCMeta):
                                                         intsct_raster_geom.inner_extent,
                                                         x_pixel_size=self.raster_geom.x_pixel_size,
                                                         y_pixel_size=self.raster_geom.y_pixel_size)
-        row_size = max_row - min_row
-        col_size = max_col - min_col
+        n_rows = max_row - min_row + 1  # +1 because of python indexing
+        n_cols = max_col - min_col + 1  # +1 because of python indexing
 
         if self.parent_root.raster_geom.intersects(geom, sref=sref):  # geometry intersects with raster boundaries
-            if self._data is None or not self.raster_geom.within(geom, sref=sref):  # maybe it does not intersect because part of data is not loaded
+            if self._data is None or not self.raster_geom.intersects(geom, sref=sref):  # maybe it does not intersect because part of data is not loaded
                 read_kwargs.update({"row": min_row})
                 read_kwargs.update({"col": min_col})
-                read_kwargs.update({"row_size": row_size})
-                read_kwargs.update({"col_size": col_size})
-                raster_data = self.load(band=band, read_kwargs=read_kwargs, data_type=data_type, inplace=inplace,
+                read_kwargs.update({"n_rows": n_rows})
+                read_kwargs.update({"n_cols": n_cols})
+                raster_data = self.load(band=band, read_kwargs=read_kwargs, dtype=dtype, inplace=inplace,
                                         decode=decode, decode_kwargs=decode_kwargs, **kwargs)
             else:
                 # +1 because maximum row/column needs to be included
                 px_slices = (slice(min_row, max_row+1), slice(min_col, max_col+1))
-                raster_data = self._load_array(px_slices, slices=slices, band=band, data_type=data_type,
+                raster_data = self._load_array(px_slices, slices=slices, band=band, dtype=dtype,
                                                inplace=inplace)
 
             if apply_mask:
-                mask = raster_data.raster_geom.create_mask(geom, buffer=buffer)
+                mask = raster_data.parent_root.raster_geom.create_mask(geom, buffer=buffer)
                 # +1 because max row and column need to be included
                 raster_data.apply_mask(mask[min_row:(max_row+1), min_col:(max_col+1)], inplace=True)
 
@@ -607,7 +613,7 @@ class RasterData(metaclass=abc.ABCMeta):
             warnings.warn(wrn_msg)
             return self
 
-    def load_by_pixel(self, row, col, row_size=1, col_size=1, slices=None, band=None, data_type=None, decode=True,
+    def load_by_pixel(self, row, col, n_rows=1, n_cols=1, slices=None, band=None, dtype=None, decode=True,
                       decode_kwargs=None, inplace=False, **kwargs):
         """
         Reads data according to the given pixel extent.
@@ -618,16 +624,16 @@ class RasterData(metaclass=abc.ABCMeta):
             Pixel row number.
         col : int
             Pixel column number.
-        row_size : int, optional
+        n_rows : int, optional
             Number of rows to read (default is 1).
-        col_size : int, optional
+        n_cols : int, optional
             Number of cols to read (default is 1).
         slices: tuple, optional
             Additional array slices for all the dimensions coming before the spatial indexing via pixels.
         band : str or int, optional
             Defines a band or a data variable name. The default behaviour is to take `self.label`.
             If `self.label` is also None, then all available bands are loaded.
-        data_type : str, optional
+        dtype : str, optional
             Data type of the returned array-like structure (default is None -> class variable `data_type` is used).
             It can be:
                 - 'xarray': loads data as an xarray.Dataset
@@ -648,28 +654,28 @@ class RasterData(metaclass=abc.ABCMeta):
             `RasterData` object containing data referring to the given pixel extent.
         """
         read_kwargs = kwargs.get("read_kwargs", {})
-        data_type = data_type if data_type is not None else self.data_type
+        dtype = dtype if dtype is not None else self.dtype
 
         min_row = row
         min_col = col
-        max_row = min_row + row_size - 1  # -1 because 'crop_px_extent' acts on pixel indexes
-        max_col = min_col + col_size - 1  # -1 because 'crop_px_extent' acts on pixel indexes
+        max_row = min_row + n_rows - 1  # -1 because 'crop_px_extent' acts on pixel indexes
+        max_col = min_col + n_cols - 1  # -1 because 'crop_px_extent' acts on pixel indexes
         min_row, min_col, max_row, max_col = self.raster_geom.crop_px_extent(min_row, min_col, max_row, max_col)
         if self._data is None:
-            row_size = max_row - min_row + 1
-            col_size = max_col - min_col + 1
+            n_rows = max_row - min_row + 1
+            n_cols = max_col - min_col + 1
             read_kwargs.update({"row": min_row})
             read_kwargs.update({"col": min_col})
-            read_kwargs.update({"row_size": row_size})
-            read_kwargs.update({"col_size": col_size})
-            return self.load(band=band, read_kwargs=read_kwargs, data_type=data_type, inplace=inplace,
+            read_kwargs.update({"n_rows": n_rows})
+            read_kwargs.update({"n_cols": n_cols})
+            return self.load(band=band, read_kwargs=read_kwargs, dtype=dtype, inplace=inplace,
                              decode=decode, decode_kwargs=decode_kwargs, **kwargs)
         else:
             # +1 because max_row/max_col needs to be included
             px_slices = (slice(min_row, max_row+1), slice(min_col, max_col+1))
-            return self._load_array(px_slices, slices=slices, band=band, data_type=data_type, inplace=inplace)
+            return self._load_array(px_slices, slices=slices, band=band, dtype=dtype, inplace=inplace)
 
-    def _load_array(self, px_slices, slices=None, band=None, data_type=None, inplace=False):
+    def _load_array(self, px_slices, slices=None, band=None, dtype=None, inplace=False):
         """
         Reads/indexes array data from memory.
 
@@ -682,7 +688,7 @@ class RasterData(metaclass=abc.ABCMeta):
         band : str or int, optional
             Defines a band or a data variable name. The default behaviour is to take `self.label`.
             If `self.label` is also None, then all available bands are loaded.
-        data_type : str, optional
+        dtype : str, optional
             Data type of the returned array-like structure (default is None -> class variable `data_type` is used).
             It can be:
                 - 'xarray': loads data as an xarray.Dataset
@@ -696,7 +702,7 @@ class RasterData(metaclass=abc.ABCMeta):
         RasterData :
             `RasterData` object containing data stored in memory.
         """
-        data_type = self.data_type if data_type is None else data_type
+        dtype = self.dtype if dtype is None else dtype
         if band is None and self.label is not None:
             band = self.label
 
@@ -728,19 +734,19 @@ class RasterData(metaclass=abc.ABCMeta):
         px_extent = (min_row, min_col, max_row, max_col)
         intsct_raster_geom = self.raster_geom.intersection_by_pixel(px_extent, inplace=False)
 
-        data = self._convert_data_type(data=data, data_type=data_type, raster_geom=intsct_raster_geom)
+        data = self._convert_data_type(data=data, dtype=dtype, raster_geom=intsct_raster_geom)
         raster_data = self.from_array(intsct_raster_geom.sref, intsct_raster_geom.geotrans, data=data,
-                                      data_type=data_type, parent=self, io=self.io, label=self.label)
+                                      dtype=dtype, parent=self, io=self.io, label=self.label)
 
         if inplace:
-            self.data_type = raster_data.data_type
+            self.dtype = raster_data.dtype
             self._data = raster_data._data
             self.raster_geom = raster_data.raster_geom
         else:
             return raster_data
 
     @abc.abstractmethod
-    def _convert_data_type(self, data=None, data_type=None, raster_geom=None):
+    def _convert_data_type(self, data=None, dtype=None, raster_geom=None):
         """
         Class wrapper for `convert_data_type` function.
 
@@ -748,7 +754,7 @@ class RasterData(metaclass=abc.ABCMeta):
         ----------
         data : numpy.ndarray or xarray.Dataset, optional
             2D/3D array-like object containing image pixel values.
-        data_type : str, optional
+        dtype : str, optional
             Data type of the returned array-like structure (default is None -> class variable `data_type` is used).
             It can be:
                 - 'xarray': converts data to an xarray.Dataset
@@ -818,7 +824,7 @@ class RasterData(metaclass=abc.ABCMeta):
             raise Exception(err_msg)
 
         raster_data = self.from_array(self.raster_geom.sref, self.raster_geom.geotrans, data=data,
-                                      data_type=self.data_type, parent=self, io=self.io, label=self.label)
+                                      dtype=self.dtype, parent=self, io=self.io, label=self.label)
 
         if inplace:
             self._data = raster_data._data
@@ -916,10 +922,24 @@ class RasterData(metaclass=abc.ABCMeta):
         """
         pass
 
+    def close(self):
+        """
+        Close IO class.
+        """
+        if self.io is not None:
+            self.io.close()
+            self.io = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args, **kwargs):
+        self.close()
+
 
 class RasterLayer(RasterData):
     """ Raster data class for one raster layer containing flat, 2D pixel data. """
-    def __init__(self, n_rows, n_cols, sref, geotrans, data=None, data_type="numpy", io=None, label=None, parent=None):
+    def __init__(self, n_rows, n_cols, sref, geotrans, data=None, dtype="numpy", io=None, label=None, parent=None):
         """
         Basic constructor of class `RasterLayer`.
 
@@ -935,7 +955,7 @@ class RasterLayer(RasterData):
             GDAL geotransform tuple.
         data : numpy.ndarray or xarray.Dataset, optional
             2D array-like object containing image pixel values.
-        data_type : str, optional
+        dtype : str, optional
             Data type of the returned 2D array-like structure. It can be:
                 - 'xarray': loads data as an xarray.DataSet (default)
                 - 'numpy': loads data as a numpy.ndarray
@@ -946,7 +966,7 @@ class RasterLayer(RasterData):
         parent : RasterLayer, optional
             Parent `RasterLayer` instance.
         """
-        super(RasterLayer, self).__init__(n_rows, n_cols, sref, geotrans, data=data, data_type=data_type, io=io,
+        super(RasterLayer, self).__init__(n_rows, n_cols, sref, geotrans, data=data, dtype=dtype, io=io,
                                           label=label, parent=parent)
 
     @property
@@ -1032,6 +1052,9 @@ class RasterLayer(RasterData):
 
         if read:
             read_kwargs = read_kwargs if read_kwargs is not None else {}
+            label = kwargs.get('label', None)
+            if label is not None:
+                read_kwargs.update({'band': label})
             data = io.read(**read_kwargs)
             return cls.from_array(sref, geotrans, data, io=io, **kwargs)
         else:
@@ -1078,7 +1101,7 @@ class RasterLayer(RasterData):
         return cls(n_rows, n_cols, sref, geotrans, data=data, **kwargs)
 
     def write(self, filepath, data=None, io_class=None, io_kwargs=None, write_kwargs=None, encode=True,
-              encode_kwargs=None):
+              encoder_kwargs=None):
         """
         Writes 2D array-like data to disk into a target file or into a file associated
         with this object.
@@ -1097,7 +1120,7 @@ class RasterLayer(RasterData):
             Keyword arguments for writing function of IO class.
         encode : bool, optional
             If true, encoding function of `RasterData` class is applied (default is True).
-        encode_kwargs : dict, optional
+        encoder_kwargs : dict, optional
             Keyword arguments for the encoder.
         """
 
@@ -1108,19 +1131,19 @@ class RasterLayer(RasterData):
         io = io_class(filepath, mode='w', **io_kwargs)
 
         if file_type == "GeoTIFF":
-            data_type = "numpy"
+            dtype = "numpy"
         elif file_type == "NetCDF":
-            data_type = "xarray"
+            dtype = "xarray"
         else:
-            data_type = self.data_type
+            dtype = self.dtype
 
         data = data if self._data is None else self._data
         self._check_data(data)
-        data = self._convert_data_type(data=data, data_type=data_type)
+        data = self._convert_data_type(data=data, dtype=dtype)
 
         if encode:
             write_kwargs.update({"encoder": self.encode})
-            write_kwargs.update({"encode_kwargs": encode_kwargs})
+            write_kwargs.update({"encoder_kwargs": encoder_kwargs})
         io.write(data, **write_kwargs)
         io.close()
 
@@ -1189,13 +1212,13 @@ class RasterLayer(RasterData):
             ax.add_feature(cartopy.feature.BORDERS)
 
         # plot data
-        ax.imshow(self._convert_data_type(data_type="numpy"), extent=img_extent, origin='upper', transform=proj,
+        ax.imshow(self._convert_data_type(dtype="numpy"), extent=img_extent, origin='upper', transform=proj,
                   cmap=cmap)
         ax.set_aspect('equal', 'box')
 
         return ax
 
-    def _convert_data_type(self, data=None, data_type=None, raster_geom=None):
+    def _convert_data_type(self, data=None, dtype=None, raster_geom=None):
         """
         Class wrapper for `convert_data_type` function.
 
@@ -1203,7 +1226,7 @@ class RasterLayer(RasterData):
         ----------
         data : numpy.ndarray or xarray.Dataset, optional
             2D array-like object containing image pixel values.
-        data_type : str, optional
+        dtype : str, optional
             Data type of the returned array-like structure (default is None -> class variable `data_type` is used).
             It can be:
                 - 'xarray': converts data to an xarray.Dataset
@@ -1218,12 +1241,12 @@ class RasterLayer(RasterData):
         """
 
         data = self._data if data is None else data
-        data_type = self.data_type if data_type is None else data_type
+        dtype = self.dtype if dtype is None else dtype
         raster_geom = self.raster_geom if raster_geom is None else raster_geom
 
         coords = (raster_geom.y_coords, raster_geom.x_coords)
 
-        return convert_data_type(data, *coords, data_type=data_type, band=self.label)
+        return convert_data_type(data, *coords, data_type=dtype, band=self.label)
 
     @staticmethod
     def _check_data(data):
@@ -1313,7 +1336,7 @@ class RasterLayer(RasterData):
 
 class RasterStack(RasterData):
     """ Raster data class for multiple congruent raster layers containing 3D pixel data. """
-    def __init__(self, raster_layers, data=None, data_type="numpy", io=None, label=None,
+    def __init__(self, raster_layers, data=None, dtype="numpy", io=None, label=None,
                  parent=None):
         """
         Basic constructor of class `RasterStack`.
@@ -1324,7 +1347,7 @@ class RasterStack(RasterData):
             Sequence of raster layer objects defining a congruent raster stack.
         data : numpy.ndarray or xarray.Dataset, optional
             3D array-like object containing image pixel values.
-        data_type : str, optional
+        dtype : str, optional
             Data type of the returned array-like structure. It can be:
                 - 'xarray': loads data as an xarray.DataSet
                 - 'numpy': loads data as a numpy.ndarray (default)
@@ -1345,14 +1368,14 @@ class RasterStack(RasterData):
             err_msg = "'raster_layers' must either be a list or a Pandas Series."
             raise Exception(err_msg)
 
-        base_raster_geom = raster_layers[raster_layers.notna()][0].raster_geom
+        base_raster_geom = raster_layers[raster_layers.notna()].iloc[0].raster_geom
         if not all([base_raster_geom == raster_layer.raster_geom
                     for raster_layer in raster_layers[raster_layers.notna()].values]):
             err_msg = "The raster layers are not congruent."
             raise Exception(err_msg)
 
         super(RasterStack, self).__init__(base_raster_geom.n_rows, base_raster_geom.n_cols, base_raster_geom.sref,
-                                          base_raster_geom.geotrans, data=data, data_type=data_type, io=io,
+                                          base_raster_geom.geotrans, data=data, dtype=dtype, io=io,
                                           label=label, parent=parent)
 
         self.raster_layers = raster_layers
@@ -1413,6 +1436,8 @@ class RasterStack(RasterData):
             n = len(data.shape)
             if n == 3:
                 n_layers, n_rows, n_cols = data.shape
+                layer_ids = layer_ids if layer_ids is not None and n_layers == len(layer_ids) \
+                    else np.arange(n_layers)
         elif isinstance(data, xr.Dataset):
             n = len(data.dims)
             if n == 3:
@@ -1420,6 +1445,8 @@ class RasterStack(RasterData):
                 n_layers = len(data.coords[dim_names[0]])
                 n_rows = len(data.coords[dim_names[1]])
                 n_cols = len(data.coords[dim_names[2]])
+                layer_ids = layer_ids if layer_ids is not None and n_layers == len(layer_ids) \
+                    else data[dim_names[0]].to_index().tolist()
         else:
             err_msg = "Data type is not supported for this class."
             raise Exception(err_msg)
@@ -1427,18 +1454,12 @@ class RasterStack(RasterData):
         if n != 3:
             raise DimensionsMismatch(n, 3)
 
-        if layer_ids is not None:
-            n_layer_ids = len(layer_ids)
-            if n_layer_ids != n_layers:
-                err_msg = "Number of given layer IDs ({}) does not match " \
-                          "with number of data layers ({}).".format(n_layer_ids, n_layers)
-                raise Exception(err_msg)
-
         raster_layers = pd.Series([RasterLayer(n_rows, n_cols, sref, geotrans)] * n_layers, index=layer_ids)
         return cls(raster_layers, data=data, **kwargs)
 
     @classmethod
-    def from_filepath(cls, filepaths, read=False, read_kwargs=None, io_class=None, io_kwargs=None, **kwargs):
+    def from_filepath(cls, filepaths, layer_ids=None, read=False, read_kwargs=None, io_class=None, io_kwargs=None,
+                      **kwargs):
         """
         Creates a `RasterStack` object from a list of filepaths.
 
@@ -1470,12 +1491,14 @@ class RasterStack(RasterData):
             err_msg = "Only one file type is allowed."
             raise Exception(err_msg)
 
-        filepath_stack = pd.DataFrame({'filepath': filepaths})
-        filepath_ref = filepath_stack[filepath_stack.notna()]['filepath'][0]
+        n_filepaths = len(filepaths)
+        layer_ids = layer_ids if layer_ids is not None and (n_filepaths == len(layer_ids)) else np.arange(n_filepaths)
+        inventory = pd.DataFrame({'filepath': filepaths}, index=layer_ids)
+        filepath_ref = inventory[inventory.notna()]['filepath'][0]
         io_class, _ = cls._io_class_from_filepath(filepath_ref) if io_class is None else io_class
         io_kwargs = io_kwargs if io_kwargs is not None else {}
 
-        io = io_class(file_ts=filepath_stack, mode='r', **io_kwargs)
+        io = io_class(inventory=inventory, mode='r', **io_kwargs)
 
         return cls.from_io(io, read=read, read_kwargs=read_kwargs, **kwargs)
 
@@ -1486,7 +1509,7 @@ class RasterStack(RasterData):
 
         Parameters
         ----------
-        io : GeoTiffFile or NcFile or object
+        io : GeoTiffRasterStack or NcRasterStack or object
             IO class instance.
         read : bool, optional
             If true, data is read and assigned to the `RasterData` class.
@@ -1505,14 +1528,18 @@ class RasterStack(RasterData):
 
         if read:
             read_kwargs = read_kwargs if read_kwargs is not None else {}
-            data, labels = io.read(**read_kwargs)
-            return cls.from_array(sref, geotrans, data, layer_ids=labels, io=io, **kwargs)
+            label = kwargs.get('label', None)
+            if label is not None:
+                read_kwargs.update({'band': label})
+            data = io.read(**read_kwargs)
+            return cls.from_array(sref, geotrans, data, io=io, **kwargs)
         else:
             n_layers, n_rows, n_cols = io.shape
-            raster_layers = pd.Series([RasterLayer(n_rows, n_cols, sref, geotrans)] * n_layers, index=io.layers)
+            raster_layers = pd.Series([RasterLayer(n_rows, n_cols, sref, geotrans)] * n_layers,
+                                      index=io.inventory.index)
             return cls(raster_layers, io=io, **kwargs)
 
-    def get_layer_data(self, layer_ids, data_type="numpy"):
+    def get_layer_data(self, layer_ids, dtype="numpy"):
         """
         Returns 2D array-like data in a list corresponding to the given list of layer ID's.
 
@@ -1520,7 +1547,7 @@ class RasterStack(RasterData):
         ----------
         layer_ids : object
             Layer ID's representing the labels of the stack dimension.
-        data_type : str, optional
+        dtype : str, optional
             Data type of the returned 2D array-like structure. It can be:
                 - 'xarray': loads data as an xarray.DataSet
                 - 'numpy': loads data as a numpy.ndarray (default)
@@ -1538,13 +1565,13 @@ class RasterStack(RasterData):
             idx = all_layer_ids.index(layer_id)
             if self._data is None:
                 raster_layer = self.raster_layers.loc[layer_id]
-                raster_layer.load(data_type=data_type, inplace=True)
+                raster_layer.load(dtype=dtype, inplace=True)
                 layer_data.append(raster_layer.data)
             else:
                 px_slices = (slice(0, self.raster_geom.n_rows), slice(0, self.raster_geom.n_cols))
                 layer_slice = [slice(idx, idx+1)]
-                raster_stack = self._load_array(px_slices, slices=layer_slice, data_type=data_type, inplace=False)
-                layer_data.append(raster_stack.data)
+                raster_stack = self._load_array(px_slices, slices=layer_slice, dtype=dtype, inplace=False)
+                layer_data.append(raster_stack.data[0, :, :])
 
         return layer_data
 
@@ -1592,7 +1619,7 @@ class RasterStack(RasterData):
             return super().crop(geom, sref=sref, slices=layer_slice, apply_mask=apply_mask, buffer=buffer,
                                 inplace=inplace)
 
-    def write(self, filepaths, layer_ids=None, stack=True, encode=True, encode_kwargs=None, **kwargs):
+    def write(self, filepaths, layer_ids=None, stack=True, encode=True, encoder_kwargs=None, **kwargs):
         """
         Writes data to disk into a target file or into a file associated
         with this object.
@@ -1608,7 +1635,7 @@ class RasterStack(RasterData):
             If false, then each layer is written to a separate file.
         encode : bool, optional
             If true, encoding function of `RasterData` class is applied (default is True).
-        encode_kwargs : dict, optional
+        encoder_kwargs : dict, optional
             Keyword arguments for the encoder.
         **kwargs : Keyword arguments for `write_stack` or `write_layers`, i.e. `io_class`, `io_kwargs`, `write_kwargs`.
         """
@@ -1620,11 +1647,11 @@ class RasterStack(RasterData):
                 err_msg = "Only one filepath is allowed when a stack is written to disk."
                 raise Exception(err_msg)
             filepath = filepaths[0]
-            self.write_stack(filepath, layer_ids=layer_ids, encode=encode, encode_kwargs=encode_kwargs, **kwargs)
+            self.write_stack(filepath, layer_ids=layer_ids, encode=encode, encoder_kwargs=encoder_kwargs, **kwargs)
         else:
-            self.write_layers(filepaths, layer_ids=layer_ids, encode=encode, encode_kwargs=encode_kwargs, **kwargs)
+            self.write_layers(filepaths, layer_ids=layer_ids, encode=encode, encoder_kwargs=encoder_kwargs, **kwargs)
 
-    def write_stack(self, filepath, layer_ids=None, encode=True, encode_kwargs=None, io_class=None, io_kwargs=None,
+    def write_stack(self, filepath, layer_ids=None, encode=True, encoder_kwargs=None, io_class=None, io_kwargs=None,
                     write_kwargs=None):
         """
         Writes all/a subset raster stack data to one file on disk. The subset selection can be done by specifying
@@ -1638,7 +1665,7 @@ class RasterStack(RasterData):
             Layer ID's representing the labels of the stack dimension (used for selecting a subset).
         encode : bool, optional
             If true, encoding function of `RasterData` class is applied (default is True).
-        encode_kwargs : dict, optional
+        encoder_kwargs : dict, optional
             Keyword arguments for the encoder.
         io_class : class, optional
             IO class.
@@ -1650,29 +1677,31 @@ class RasterStack(RasterData):
 
         write_kwargs = write_kwargs if write_kwargs is not None else {}
         io_kwargs = io_kwargs if io_kwargs is not None else {}
+        #layer_ids = layer_ids if layer_ids is not None else np.arange(len(self))
 
         io_class, file_type = self._io_class_from_filepath(filepath) if io_class is None else io_class
-        raster_layers = self.raster_layers.loc[layer_ids]
-        filepath_stack = pd.DataFrame({'filepath': [None if raster_layer.io is None else raster_layer.filepath
-                                                    for raster_layer in raster_layers]})
-        io = io_class(file_ts=filepath_stack, mode='w', **io_kwargs)
+        #raster_layers = self.raster_layers.loc[layer_ids]
+        #[None if raster_layer.io is None else raster_layer.filepath for i, raster_layer in enumerate(raster_layers)]
+        #filepath_stack = pd.DataFrame({'filepath': [None if raster_layer.io is None else raster_layer.filepath
+        #                                            for raster_layer in raster_layers]})
+        io = io_class(mode='w', **io_kwargs)
 
         if file_type == "GeoTIFF":
-            data_type = "numpy"
+            dtype = "numpy"
         elif file_type == "NetCDF":
-            data_type = "xarray"
+            dtype = "xarray"
         else:
-            data_type = self.data_type
-        data = self._convert_data_type(data_type=data_type)
+            dtype = self.dtype
+        data = self._convert_data_type(dtype=dtype)
 
         if encode:
             write_kwargs.update({"encoder": self.encode})
-            write_kwargs.update({"encode_kwargs": encode_kwargs})
-        io.write(data, **write_kwargs)
+            write_kwargs.update({"encoder_kwargs": encoder_kwargs})
+        io.write(data, filepath, **write_kwargs)
         io.close()
 
     def write_layers(self, filepaths, layer_ids=None, io_class=None, io_kwargs=None, write_kwargs=None,
-                     encode=True, encode_kwargs=None):
+                     encode=True, encoder_kwargs=None):
         """
         Writes each layer of all/a subset raster stack data to a file on disk. The subset selection can be done by
         specifying a list of labels/layer ID's in `layer_ids`.
@@ -1685,7 +1714,7 @@ class RasterStack(RasterData):
             Layer ID's representing the labels of the stack dimension (used for selecting a subset).
         encode : bool, optional
             If true, encoding function of `RasterData` class is applied (default is True).
-        encode_kwargs : dict, optional
+        encoder_kwargs : dict, optional
             Keyword arguments for the encoder.
         io_class : class, optional
             IO class.
@@ -1696,6 +1725,7 @@ class RasterStack(RasterData):
         """
         write_kwargs = write_kwargs if write_kwargs is not None else {}
         io_kwargs = io_kwargs if io_kwargs is not None else {}
+        layer_ids = list(self.raster_layers.index) if layer_ids is None else layer_ids
 
         if len(filepaths) != len(layer_ids):
             err_msg = "Number of given filepaths ({}) does not match number of given indizes ({})."
@@ -1710,12 +1740,12 @@ class RasterStack(RasterData):
                 raise IndexError(err_msg)
 
             raster_layer = self.raster_layers.loc[layer_id]
-            data = self.get_layer_data(layer_id, data_type=self.data_type)[0]
+            data = self.get_layer_data(layer_id, dtype=self.dtype)[0]
             raster_layer.write(filepath, data=data, io_class=io_class, io_kwargs=io_kwargs, write_kwargs=write_kwargs,
-                               encode=encode, encode_kwargs=encode_kwargs)
+                               encode=encode, encoder_kwargs=encoder_kwargs)
 
     # TODO: add more functionalities and options
-    def plot(self, layer_id=None, ax=None, proj=None, proj_extent=None, extent_sref=None, cmap='viridis',
+    def plot(self, layer_id=None, ax=None, proj=None, extent=None, extent_sref=None, cmap='viridis',
              interactive=False, add_country_borders=True):
         """
         Plots the data on a map that uses a projection if provided.
@@ -1735,7 +1765,7 @@ class RasterStack(RasterData):
             Projection of the map. The figure will be drawn in
             this spatial reference. If omitted, the spatial reference in which
             the data are present is used.
-        proj_extent : 4 tuple, optional
+        extent : 4 tuple, optional
             Extent of the projection (x_min, x_max, y_min, y_max). If omitted, the bbox of the data is used.
         extent_sref : geospade.spatial_ref.SpatialRef or osr.SpatialReference, optional
             Spatial reference of the coordinates.
@@ -1773,8 +1803,8 @@ class RasterStack(RasterData):
             proj = self.raster_geom.to_cartopy_crs()
 
         # limit axes to the given extent in the projection
-        if proj_extent:
-            x_min, y_min, x_max, y_max = proj_extent
+        if extent:
+            x_min, y_min, x_max, y_max = extent
             if extent_sref:
                 x_min, y_min = coordinate_traffo(x_min, y_min, extent_sref, self.raster_geom.sref.osr_sref)
                 x_max, y_max = coordinate_traffo(x_max, y_max, extent_sref, self.raster_geom.sref.osr_sref)
@@ -1819,10 +1849,9 @@ class RasterStack(RasterData):
 
             slider.on_changed(update)
 
-        plt.show()
         return ax, slider
 
-    def _convert_data_type(self, data=None, data_type=None, raster_geom=None):
+    def _convert_data_type(self, data=None, dtype=None, raster_geom=None):
         """
         Class wrapper for `convert_data_type` function.
 
@@ -1830,7 +1859,7 @@ class RasterStack(RasterData):
         ----------
         data : numpy.ndarray or xarray.Dataset, optional
             3D array-like object containing image pixel values.
-        data_type : str, optional
+        dtype : str, optional
             Data type of the returned array-like structure (default is None -> class variable `data_type` is used).
             It can be:
                 - 'xarray': converts data to an xarray.Dataset
@@ -1845,12 +1874,12 @@ class RasterStack(RasterData):
         """
 
         data = self._data if data is None else data
-        data_type = self.data_type if data_type is None else data_type
+        dtype = self.dtype if dtype is None else dtype
         raster_geom = self.raster_geom if raster_geom is None else raster_geom
 
         coords = (list(self.raster_layers.index), raster_geom.y_coords, raster_geom.x_coords)
 
-        return convert_data_type(data, *coords, data_type=data_type, band=self.label)
+        return convert_data_type(data, *coords, data_type=dtype, band=self.label)
 
     @staticmethod
     def _check_data(data):

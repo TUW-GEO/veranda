@@ -126,14 +126,14 @@ class GeoTiffRasterStack:
         """
         Building vrt stack.
         """
-        if self.inventory is not None:
+        if inventory is not None:
             path = tempfile.gettempdir()
             date_str = datetime.utcnow().strftime("%Y%m%d%H%M%S")
             tmp_filename = "{:}.vrt".format(date_str)
             vrt_filepath = os.path.join(path, tmp_filename)
-            filepaths = self.inventory.dropna()['filepath'].to_list()
-            bands = 1 if "band" not in inventory.keys() else self.inventory.dropna()['band'].to_list()  # take first band as a default
-            nodatavals = -9999 if "nodataval" not in inventory.keys() else self.inventory.dropna()['nodataval'].to_list()   # take -9999 as a default no data value
+            filepaths = inventory.dropna()['filepath'].to_list()
+            bands = 1 if "band" not in inventory.keys() else inventory.dropna()['band'].to_list()  # take first band as a default
+            nodatavals = -9999 if "nodataval" not in inventory.keys() else inventory.dropna()['nodataval'].to_list()   # take -9999 as a default no data value
             create_vrt_file(vrt_filepath, filepaths, bands=bands, geotrans=self.geotrans, n_cols=self.shape[2],
                             n_rows=self.shape[1], dtype=self.dtype, sref=self.sref, nodatavals=nodatavals)
             return gdal.Open(vrt_filepath, gdal.GA_ReadOnly)
@@ -482,8 +482,11 @@ class NcRasterStack:
 
         self.mfdataset = None
         self.shape = None
+        self._dims = None
         self.mode = mode
         self.inventory = inventory
+        if self.inventory is not None and self.inventory.index.name is None:
+            self.inventory.index.name = 'time'
 
         self.geotrans = geotrans
         self.sref = sref
@@ -503,6 +506,7 @@ class NcRasterStack:
                 self.geotrans = netcdf.geotrans
                 self.metadata = netcdf.metadata
                 self.shape = (len(self.inventory), netcdf.shape[-2], netcdf.shape[-1])
+                self._dims = len(netcdf.shape)
 
             self._build_stack()
 
@@ -511,8 +515,18 @@ class NcRasterStack:
         Building file stack and initialize netCDF4.mfdataset.
         """
         if self.inventory is not None:
-            self.mfdataset = xr.open_mfdataset(
-                self.inventory.dropna()['filepath'].tolist(), chunks=self.chunks, combine='by_coords')
+            if self._dims == 2:
+                self.mfdataset = xr.open_mfdataset(self.inventory.dropna()['filepath'].tolist(),
+                                                   chunks=self.chunks,
+                                                   combine="nested",
+                                                   concat_dim=self.inventory.index.name)
+                self.mfdataset = self.mfdataset.assign_coords({self.inventory.index.name: self.inventory.index})
+                gm_name = NcFile.get_gm_name(self.mfdataset)
+                if gm_name is not None:
+                    self.mfdataset[gm_name] = self.mfdataset[gm_name].sel(**{self.inventory.index.name: 0}, drop=True)
+            else:
+                self.mfdataset = xr.open_mfdataset(
+                    self.inventory.dropna()['filepath'].tolist(), chunks=self.chunks, combine='by_coords')
         else:
             raise RuntimeError('Building stack failed')
 
@@ -576,6 +590,11 @@ class NcRasterStack:
         if 'time' in list(data.dims.keys()) and data.variables['time'].dtype == 'float':
             timestamps = netCDF4.num2date(data['time'], self.time_units)
             data = data.assign_coords({'time': timestamps})
+
+        # add projection informations again
+        gm_name = NcFile.get_gm_name(self.mfdataset)
+        if gm_name is not None:
+            data[gm_name] = self.mfdataset[gm_name]
 
         return self._fill_nan(data)
 

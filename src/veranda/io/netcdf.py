@@ -110,7 +110,7 @@ class NcFile(object):
     def metadata(self):
         return self.get_global_atts()
 
-    def _open(self, n_rows=None, n_cols=None, auto_scale=False):
+    def _open(self, n_rows=None, n_cols=None, create_time_dim=True, auto_scale=False):
         """
         Open file.
 
@@ -142,15 +142,10 @@ class NcFile(object):
 
         if self.mode in ['r', 'a', 'r_netcdf', 'r_xarray']:
 
-            # search for grid mapping attributes in the dataset
-            gm_var_name = None
-            for var_name in self.src_var.keys():
-                if hasattr(self.src_var[var_name], "attrs") and "grid_mapping" in self.src_var[var_name].attrs:
-                    gm_var_name = var_name
+            self.gm_name = self.get_gm_name(self.src_var)
 
             # retrieve geotransform and spatial reference parameters
-            if gm_var_name is not None:
-                self.gm_name = self.src_var[gm_var_name].attrs["grid_mapping"]
+            if self.gm_name is not None:
                 if 'GeoTransform' in self.src_var[self.gm_name].attrs.keys():
                     self.geotrans = tuple(map(float, self.src_var[self.gm_name].attrs['GeoTransform'].split(' ')))
                 if 'spatial_ref' in self.src_var[self.gm_name].attrs.keys():
@@ -197,7 +192,7 @@ class NcFile(object):
                                         ('spatial_ref', self.sref),
                                         ('GeoTransform', geotrans)])
                 else:
-                    self.gm_name = "None"
+                    self.gm_name = "proj_unknown"
                     geotrans = "{:} {:} {:} {:} {:} {:}".format(
                         self.geotrans[0], self.geotrans[1],
                         self.geotrans[2], self.geotrans[3],
@@ -209,17 +204,18 @@ class NcFile(object):
                 crs = self.src.createVariable(self.gm_name, 'S1', ())
                 crs.setncatts(attr)
 
-            if 'time' not in self.src.dimensions:
-                self.src.createDimension('time', None)  # None means unlimited dimension
-                if self.chunksizes is not None:
-                    chunksizes = (self.chunksizes[0],)
-                else:
-                    chunksizes = None
+            if create_time_dim:
+                if 'time' not in self.src.dimensions:
+                    self.src.createDimension('time', None)  # None means unlimited dimension
+                    if self.chunksizes is not None:
+                        chunksizes = (self.chunksizes[0],)
+                    else:
+                        chunksizes = None
 
-                self.src_var['time'] = self.src.createVariable('time', np.float64, ('time',), chunksizes=chunksizes,
-                                                               zlib=self.zlib, complevel=self.complevel)
-            else:
-                self.src_var['time'] = self.src['time']
+                    self.src_var['time'] = self.src.createVariable('time', np.float64, ('time',), chunksizes=chunksizes,
+                                                                   zlib=self.zlib, complevel=self.complevel)
+                else:
+                    self.src_var['time'] = self.src['time']
 
             if 'y' not in self.src.dimensions and n_rows is not None:
                 self.src.createDimension('y', n_rows)
@@ -275,7 +271,12 @@ class NcFile(object):
         """
         encoder_kwargs = {} if encoder_kwargs is None else encoder_kwargs
 
-        bands = list(set(ds.variables.keys()) - set(['time', 'x', 'y']))
+        # search for grid mapping to exclude it from bands
+        dims = ['time', 'y', 'x']
+        gm_name = self.get_gm_name(ds)
+        if gm_name is not None:
+            dims.append(gm_name)
+        bands = list(set(ds.variables.keys()) - set(dims))
         n_bands = len(bands)
 
         if nodataval is not None and not isinstance(nodataval, list):
@@ -285,7 +286,8 @@ class NcFile(object):
 
         # open file and create dimensions and coordinates
         if self.src is None:
-            self._open(n_rows=ds.dims['y'], n_cols=ds.dims['x'])
+            create_time_dim = 'time' in ds.dims
+            self._open(n_rows=ds.dims['y'], n_cols=ds.dims['x'], create_time_dim=create_time_dim)
 
         if self.mode == 'a':
             # determine index where to append
@@ -296,9 +298,12 @@ class NcFile(object):
         # fill coordinate data
         coord_names = list(ds.coords.keys())
         if 'time' in coord_names:
-            dates = netCDF4.date2num(ds['time'].to_index().to_pydatetime(),
-                                     self.time_units, 'standard')
-            self.src_var['time'][append_start:] = dates
+            if ds['time'].dtype == "<M8[ns]":  # "<M8[ns]" is numpy datetime in ns # ToDo: solve this in a better way
+                timestamps = netCDF4.date2num(ds['time'].to_index().to_pydatetime(),
+                                         self.time_units, 'standard')
+            else:
+                timestamps = ds['time']
+            self.src_var['time'][append_start:] = timestamps
         if 'x' in coord_names:
             self.src_var['x'][:] = ds['x'].data
         if 'y' in coord_names:
@@ -338,7 +343,7 @@ class NcFile(object):
                 err_msg = "Data is only allowed to have 2 or 3 dimensions, but it has {} dimensions.".format(n_dims)
                 raise ValueError(err_msg)
 
-    def read(self, row=None, col=None, n_rows=1, n_cols=1, bands=None, nodatavals=None, decoder=None,
+    def read(self, row=None, col=None, n_rows=1, n_cols=1, band=None, nodataval=None, decoder=None,
              decoder_kwargs=None):
         """
         Read data from netCDF4 file.
@@ -355,7 +360,7 @@ class NcFile(object):
             Number of rows to read (default is 1).
         n_cols : int, optional
             Number of columns to read (default is 1).
-        bands : str or list of str, optional
+        band : str or list of str, optional
             Band numbers/names. If None, all bands will be read.
         nodatavals : tuple or list, optional
             List of no data values for each band.
@@ -370,9 +375,6 @@ class NcFile(object):
         data : xarray.Dataset or netCDF4.variables
             Data stored in NetCDF file. Data type depends on read mode.
         """
-        if nodatavals is not None and not isinstance(nodatavals, list):
-            nodatavals = [nodatavals]
-
         decoder_kwargs = {} if decoder_kwargs is None else decoder_kwargs
 
         if row is None and col is None:  # read whole dataset
@@ -392,9 +394,21 @@ class NcFile(object):
         else:
             slices = (slice(row, row+n_rows), slice(col, col+n_cols))
 
-        if bands is None:
+        if band is None:
             bands = list(self.src_var.keys())
-            bands = list(set(bands) - set(['time', 'y', 'x']))
+            bands = list(set(bands) - set(['time', 'y', 'x', self.gm_name]))
+        else:
+            if not isinstance(band, list):
+                bands = [band]
+            else:
+                bands = band
+
+        if nodataval is not None and not isinstance(nodataval, list):
+            nodatavals = [nodataval]
+        elif nodataval is None:
+            nodatavals = [-9999]*len(bands)
+        else:
+            nodatavals = nodataval
 
         if self.mode == "r_netcdf":  # convert to xarray if necessary
             common_chunks = self.src[bands[0]].chunking()
@@ -412,15 +426,17 @@ class NcFile(object):
             src_var = src_var.assign_coords({'time': timestamps})
 
         data = None
-        for i, band in enumerate(bands):
-            data_ar = src_var[band][slices]
+        for i in range(len(bands)):
+            data_ar = src_var[bands[i]][slices]
             if decoder:
-                data_ar.data = decoder(data_ar.data, nodatavals[i], **decoder_kwargs)
+                data_ar.data = decoder(data_ar.data, nodataval=nodatavals[i], **decoder_kwargs)
             if data is None:
                 data = data_ar.to_dataset()
             else:
                 data = data.merge(data_ar.to_dataset())
 
+        if self.gm_name is not None:
+            data[self.gm_name] = self.src_var[self.gm_name]  # add projection information again
         return data
 
     def set_global_atts(self, atts):
@@ -461,6 +477,20 @@ class NcFile(object):
         """
         if self.src is not None:
             self.src.close()
+
+    @staticmethod
+    def get_gm_name(ds):
+        # search for grid mapping attributes in the dataset
+        gm_var_name = None
+        for var_name in ds.keys():
+            if hasattr(ds[var_name], "attrs") and "grid_mapping" in ds[var_name].attrs:
+                gm_var_name = var_name
+
+        gm_name = None
+        if gm_var_name is not None:
+            gm_name = ds[gm_var_name].attrs["grid_mapping"]
+
+        return gm_name
 
     def __enter__(self):
         return self
