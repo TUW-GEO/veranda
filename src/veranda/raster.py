@@ -188,7 +188,7 @@ class RasterData(metaclass=abc.ABCMeta):
             Parent `RasterData` instance.
         """
 
-        self.raster_geom = RasterGeometry(n_rows, n_cols, sref, geotrans)
+        self.geom = RasterGeometry(n_rows, n_cols, sref, geotrans)
 
         # set and check data properties
         if data is not None:
@@ -365,17 +365,17 @@ class RasterData(metaclass=abc.ABCMeta):
         """
 
         # create new geometry from the intersection
-        intsct_raster_geom = self.raster_geom & geom
+        intsct_raster_geom = self.geom & geom
 
         if intsct_raster_geom is not None and self._data is not None:
-            min_col, min_row, max_col, max_row = rel_extent((self.raster_geom.ul_x, self.raster_geom.ul_y),
+            min_col, min_row, max_col, max_row = rel_extent((self.geom.ul_x, self.geom.ul_y),
                                                             intsct_raster_geom.inner_extent,
-                                                            x_pixel_size=self.raster_geom.x_pixel_size,
-                                                            y_pixel_size=self.raster_geom.y_pixel_size)
+                                                            x_pixel_size=self.geom.x_pixel_size,
+                                                            y_pixel_size=self.geom.y_pixel_size)
             px_slices = (slice(min_row, max_row+1), slice(min_col, max_col+1))
             raster_data = self._load_array(px_slices, slices=slices, inplace=inplace)
             if apply_mask:
-                mask = raster_data.raster_geom.create_mask(geom, buffer=buffer)
+                mask = raster_data.geom.create_mask(geom, buffer=buffer)
                 # +1 because max row and column need to be included
                 raster_data.apply_mask(mask[min_row:(max_row+1), min_col:(max_col+1)], inplace=True)
             return raster_data
@@ -449,9 +449,9 @@ class RasterData(metaclass=abc.ABCMeta):
             n_rows = read_kwargs.get("n_rows", 1)
             max_row, max_col = row + n_rows - 1, col + n_cols - 1 # -1 because of Python indexing
             px_extent = (row, col, max_row, max_col)
-            intsct_raster_geom = self.raster_geom.intersection_by_pixel(px_extent, inplace=False)
+            intsct_raster_geom = self.geom.intersection_by_pixel(px_extent, inplace=False)
         else:
-            intsct_raster_geom = self.raster_geom
+            intsct_raster_geom = self.geom
 
         data = self._convert_data_type(data=data, dtype=dtype, raster_geom=intsct_raster_geom)
         raster_data = self.from_array(intsct_raster_geom.sref, intsct_raster_geom.geotrans, data=data,
@@ -460,7 +460,7 @@ class RasterData(metaclass=abc.ABCMeta):
         if inplace:
             self.dtype = raster_data.dtype
             self._data = raster_data._data
-            self.raster_geom = raster_data.raster_geom
+            self.geom = raster_data.geom
             return self
         else:
             return raster_data
@@ -518,9 +518,9 @@ class RasterData(metaclass=abc.ABCMeta):
 
         poi = ogr.Geometry(ogr.wkbPoint)
         poi.AddPoint(x, y)
-        row, col = self.raster_geom.xy2rc(x, y, px_origin=px_origin, sref=sref)
-        if self.parent_root.raster_geom.intersects(poi, sref=sref):  # point is within raster boundaries
-            if self._data is None or not self.raster_geom.within(poi, sref=sref): # maybe it does not intersect because part of data is not loaded
+        row, col = self.geom.xy2rc(x, y, px_origin=px_origin, sref=sref)
+        if self.parent_root.geom.intersects(poi, sref=sref):  # point is within raster boundaries
+            if self._data is None or not self.geom.within(poi, sref=sref): # maybe it does not intersect because part of data is not loaded
                 read_kwargs.update({"row": row})
                 read_kwargs.update({"col": col})
                 return self.load(band=band, read_kwargs=read_kwargs, dtype=dtype, inplace=inplace,
@@ -579,17 +579,17 @@ class RasterData(metaclass=abc.ABCMeta):
         read_kwargs = kwargs.get("read_kwargs", {})
         dtype = dtype if dtype is not None else self.dtype
 
-        intsct_raster_geom = self.raster_geom & geom
-        min_col, min_row, max_col, max_row = rel_extent((self.raster_geom.parent_root.ul_x,
-                                                         self.raster_geom.parent_root.ul_y),
+        intsct_raster_geom = self.geom & geom
+        min_col, min_row, max_col, max_row = rel_extent((self.geom.parent_root.ul_x,
+                                                         self.geom.parent_root.ul_y),
                                                         intsct_raster_geom.inner_extent,
-                                                        x_pixel_size=self.raster_geom.x_pixel_size,
-                                                        y_pixel_size=self.raster_geom.y_pixel_size)
+                                                        x_pixel_size=self.geom.x_pixel_size,
+                                                        y_pixel_size=self.geom.y_pixel_size)
         n_rows = max_row - min_row + 1  # +1 because of python indexing
         n_cols = max_col - min_col + 1  # +1 because of python indexing
 
-        if self.parent_root.raster_geom.intersects(geom, sref=sref):  # geometry intersects with raster boundaries
-            if self._data is None or not self.raster_geom.intersects(geom, sref=sref):  # maybe it does not intersect because part of data is not loaded
+        if self.parent_root.geom.intersects(geom, sref=sref):  # geometry intersects with raster boundaries
+            if self._data is None or not self.geom.intersects(geom, sref=sref):  # maybe it does not intersect because part of data is not loaded
                 read_kwargs.update({"row": min_row})
                 read_kwargs.update({"col": min_col})
                 read_kwargs.update({"n_rows": n_rows})
@@ -603,7 +603,7 @@ class RasterData(metaclass=abc.ABCMeta):
                                                inplace=inplace)
 
             if apply_mask:
-                mask = raster_data.parent_root.raster_geom.create_mask(geom, buffer=buffer)
+                mask = raster_data.parent_root.geom.create_mask(geom, buffer=buffer)
                 # +1 because max row and column need to be included
                 raster_data.apply_mask(mask[min_row:(max_row+1), min_col:(max_col+1)], inplace=True)
 
@@ -660,7 +660,7 @@ class RasterData(metaclass=abc.ABCMeta):
         min_col = col
         max_row = min_row + n_rows - 1  # -1 because 'crop_px_extent' acts on pixel indexes
         max_col = min_col + n_cols - 1  # -1 because 'crop_px_extent' acts on pixel indexes
-        min_row, min_col, max_row, max_col = self.raster_geom.crop_px_extent(min_row, min_col, max_row, max_col)
+        min_row, min_col, max_row, max_col = self.geom.crop_px_extent(min_row, min_col, max_row, max_col)
         if self._data is None:
             n_rows = max_row - min_row + 1
             n_cols = max_col - min_col + 1
@@ -732,7 +732,7 @@ class RasterData(metaclass=abc.ABCMeta):
         min_row, max_row = px_slices[0].start, px_slices[0].stop
         min_col, max_col = px_slices[1].start, px_slices[1].stop
         px_extent = (min_row, min_col, max_row, max_col)
-        intsct_raster_geom = self.raster_geom.intersection_by_pixel(px_extent, inplace=False)
+        intsct_raster_geom = self.geom.intersection_by_pixel(px_extent, inplace=False)
 
         data = self._convert_data_type(data=data, dtype=dtype, raster_geom=intsct_raster_geom)
         raster_data = self.from_array(intsct_raster_geom.sref, intsct_raster_geom.geotrans, data=data,
@@ -741,7 +741,7 @@ class RasterData(metaclass=abc.ABCMeta):
         if inplace:
             self.dtype = raster_data.dtype
             self._data = raster_data._data
-            self.raster_geom = raster_data.raster_geom
+            self.geom = raster_data.geom
         else:
             return raster_data
 
@@ -823,7 +823,7 @@ class RasterData(metaclass=abc.ABCMeta):
             err_msg = "Data type is not supported for accessing and decoding the data."
             raise Exception(err_msg)
 
-        raster_data = self.from_array(self.raster_geom.sref, self.raster_geom.geotrans, data=data,
+        raster_data = self.from_array(self.geom.sref, self.geom.geotrans, data=data,
                                       dtype=self.dtype, parent=self, io=self.io, label=self.label)
 
         if inplace:
@@ -924,11 +924,11 @@ class RasterData(metaclass=abc.ABCMeta):
 
     def close(self):
         """
-        Close IO class.
+        Close IO class and delete data from memory.
         """
         if self.io is not None:
             self.io.close()
-            self.io = None
+            self._data = None
 
     def __enter__(self):
         return self
@@ -987,7 +987,7 @@ class RasterLayer(RasterData):
         """
         self._check_data(data)
         n_data_rows, n_data_cols = convert_data_type(data, "numpy", band=self.label).shape
-        n_rows, n_cols = self.raster_geom.n_rows, self.raster_geom.n_cols
+        n_rows, n_cols = self.geom.n_rows, self.geom.n_cols
         if (n_rows, n_cols) == (n_data_rows, n_data_cols):
             self._data = data
         else:
@@ -1187,20 +1187,20 @@ class RasterLayer(RasterData):
             raise ImportError(err_msg)
 
         if proj is None:
-            proj = self.raster_geom.to_cartopy_crs()
+            proj = self.geom.to_cartopy_crs()
 
         if ax is None:
             fig = plt.figure()
             ax = fig.add_subplot(111, projection=proj)
 
-        ll_x, ll_y, ur_x, ur_y = self.raster_geom.outer_extent
+        ll_x, ll_y, ur_x, ur_y = self.geom.outer_extent
         img_extent = ll_x, ur_x, ll_y, ur_y
 
         if extent:
             x_min, y_min, x_max, y_max = extent
             if extent_sref:
-                x_min, y_min = coordinate_traffo(x_min, y_min, extent_sref, self.raster_geom.sref.osr_sref)
-                x_max, y_max = coordinate_traffo(x_max, y_max, extent_sref, self.raster_geom.sref.osr_sref)
+                x_min, y_min = coordinate_traffo(x_min, y_min, extent_sref, self.geom.sref.osr_sref)
+                x_max, y_max = coordinate_traffo(x_max, y_max, extent_sref, self.geom.sref.osr_sref)
             ax.set_xlim([x_min, x_max])
             ax.set_ylim([y_min, y_max])
 
@@ -1242,7 +1242,7 @@ class RasterLayer(RasterData):
 
         data = self._data if data is None else data
         dtype = self.dtype if dtype is None else dtype
-        raster_geom = self.raster_geom if raster_geom is None else raster_geom
+        raster_geom = self.geom if raster_geom is None else raster_geom
 
         coords = (raster_geom.y_coords, raster_geom.x_coords)
 
@@ -1330,10 +1330,11 @@ class RasterLayer(RasterData):
             Raster layer defined by the intersection.
         """
 
-        intsct_raster_geom = self.raster_geom[item]
+        intsct_raster_geom = self.geom[item]
         return self.crop(intsct_raster_geom, inplace=False)
 
 
+# TODO: how can one define len + getitem without being an iterator
 class RasterStack(RasterData):
     """ Raster data class for multiple congruent raster layers containing 3D pixel data. """
     def __init__(self, raster_layers, data=None, dtype="numpy", io=None, label=None,
@@ -1368,8 +1369,8 @@ class RasterStack(RasterData):
             err_msg = "'raster_layers' must either be a list or a Pandas Series."
             raise Exception(err_msg)
 
-        base_raster_geom = raster_layers[raster_layers.notna()].iloc[0].raster_geom
-        if not all([base_raster_geom == raster_layer.raster_geom
+        base_raster_geom = raster_layers[raster_layers.notna()].iloc[0].geom
+        if not all([base_raster_geom == raster_layer.geom
                     for raster_layer in raster_layers[raster_layers.notna()].values]):
             err_msg = "The raster layers are not congruent."
             raise Exception(err_msg)
@@ -1378,7 +1379,7 @@ class RasterStack(RasterData):
                                           base_raster_geom.geotrans, data=data, dtype=dtype, io=io,
                                           label=label, parent=parent)
 
-        self.raster_layers = raster_layers
+        self.inventory = raster_layers
 
     @property
     def data(self):
@@ -1399,7 +1400,7 @@ class RasterStack(RasterData):
         self._check_data(data)
         n_data_layers, n_data_rows, n_data_cols = convert_data_type(data, "numpy", band=self.label).shape
 
-        n_layers, n_rows, n_cols = len(self.raster_layers), self.raster_geom.n_rows, self.raster_geom.n_cols
+        n_layers, n_rows, n_cols = len(self.inventory), self.geom.n_rows, self.geom.n_cols
         if (n_layers, n_rows, n_cols) == (n_data_layers, n_data_rows, n_data_cols):
             self._data = data
         else:
@@ -1407,6 +1408,10 @@ class RasterStack(RasterData):
                       "Raster stack dimension ({}, {}, {}).".format(n_data_layers, n_data_rows, n_data_cols,
                                                                     n_layers, n_rows, n_cols)
             warnings.warn(wrn_msg)
+
+    @property
+    def labels(self):
+        return list(self.inventory.index)
 
     @classmethod
     def from_array(cls, sref, geotrans, data, layer_ids=None, **kwargs):
@@ -1560,15 +1565,16 @@ class RasterStack(RasterData):
             layer_ids = [layer_ids]
 
         layer_data = []
-        all_layer_ids = list(self.raster_layers.index)
+        all_layer_ids = list(self.inventory.index)
         for layer_id in layer_ids:
             idx = all_layer_ids.index(layer_id)
             if self._data is None:
-                raster_layer = self.raster_layers.loc[layer_id]
-                raster_layer.load(dtype=dtype, inplace=True)
+                raster_layer = self.inventory.loc[layer_id]
+                if raster_layer.data is None:
+                    raster_layer.load(dtype=dtype, inplace=True)
                 layer_data.append(raster_layer.data)
             else:
-                px_slices = (slice(0, self.raster_geom.n_rows), slice(0, self.raster_geom.n_cols))
+                px_slices = (slice(0, self.geom.n_rows), slice(0, self.geom.n_cols))
                 layer_slice = [slice(idx, idx+1)]
                 raster_stack = self._load_array(px_slices, slices=layer_slice, dtype=dtype, inplace=False)
                 layer_data.append(raster_stack.data[0, :, :])
@@ -1608,12 +1614,12 @@ class RasterStack(RasterData):
         if layer_ids is not None:
             if not isinstance(layer_ids, list):
                 layer_ids = [layer_ids]
-            all_layer_ids = list(self.raster_layers.index)
+            all_layer_ids = list(self.inventory.index)
             layer_idxs = [all_layer_ids.index(layer_id) for layer_id in layer_ids]
             layer_slice = [layer_idxs]
 
         if geom is None:
-            px_slices = (slice(0, self.raster_geom.n_rows), slice(0, self.raster_geom.n_cols))
+            px_slices = (slice(0, self.geom.n_rows), slice(0, self.geom.n_cols))
             return self._load_array(px_slices, slices=layer_slice, inplace=inplace)
         else:
             return super().crop(geom, sref=sref, slices=layer_slice, apply_mask=apply_mask, buffer=buffer,
@@ -1677,13 +1683,8 @@ class RasterStack(RasterData):
 
         write_kwargs = write_kwargs if write_kwargs is not None else {}
         io_kwargs = io_kwargs if io_kwargs is not None else {}
-        #layer_ids = layer_ids if layer_ids is not None else np.arange(len(self))
 
         io_class, file_type = self._io_class_from_filepath(filepath) if io_class is None else io_class
-        #raster_layers = self.raster_layers.loc[layer_ids]
-        #[None if raster_layer.io is None else raster_layer.filepath for i, raster_layer in enumerate(raster_layers)]
-        #filepath_stack = pd.DataFrame({'filepath': [None if raster_layer.io is None else raster_layer.filepath
-        #                                            for raster_layer in raster_layers]})
         io = io_class(mode='w', **io_kwargs)
 
         if file_type == "GeoTIFF":
@@ -1725,21 +1726,21 @@ class RasterStack(RasterData):
         """
         write_kwargs = write_kwargs if write_kwargs is not None else {}
         io_kwargs = io_kwargs if io_kwargs is not None else {}
-        layer_ids = list(self.raster_layers.index) if layer_ids is None else layer_ids
+        layer_ids = list(self.inventory.index) if layer_ids is None else layer_ids
 
         if len(filepaths) != len(layer_ids):
             err_msg = "Number of given filepaths ({}) does not match number of given indizes ({})."
             err_msg = err_msg.format(len(filepaths), len(layer_ids))
             raise Exception(err_msg)
 
-        all_layer_ids = list(self.raster_layers.index)
+        all_layer_ids = list(self.inventory.index)
         for i, filepath in enumerate(filepaths):
             layer_id = layer_ids[i]
             if layer_id not in all_layer_ids:
                 err_msg = "Layer ID {} is not available.".format(layer_ids[i])
                 raise IndexError(err_msg)
 
-            raster_layer = self.raster_layers.loc[layer_id]
+            raster_layer = self.inventory.loc[layer_id]
             data = self.get_layer_data(layer_id, dtype=self.dtype)[0]
             raster_layer.write(filepath, data=data, io_class=io_class, io_kwargs=io_kwargs, write_kwargs=write_kwargs,
                                encode=encode, encoder_kwargs=encoder_kwargs)
@@ -1791,7 +1792,7 @@ class RasterStack(RasterData):
             raise ImportError(err_msg)
 
         if layer_id is None:
-            layer_id = list(self.raster_layers.index)[0]  # take the first layer as a default value
+            layer_id = list(self.inventory.index)[0]  # take the first layer as a default value
 
         # create new figure if it is necessary
         if ax is None:
@@ -1800,14 +1801,14 @@ class RasterStack(RasterData):
 
         # get projection definition from raster geometry
         if proj is None:
-            proj = self.raster_geom.to_cartopy_crs()
+            proj = self.geom.to_cartopy_crs()
 
         # limit axes to the given extent in the projection
         if extent:
             x_min, y_min, x_max, y_max = extent
             if extent_sref:
-                x_min, y_min = coordinate_traffo(x_min, y_min, extent_sref, self.raster_geom.sref.osr_sref)
-                x_max, y_max = coordinate_traffo(x_max, y_max, extent_sref, self.raster_geom.sref.osr_sref)
+                x_min, y_min = coordinate_traffo(x_min, y_min, extent_sref, self.geom.sref.osr_sref)
+                x_max, y_max = coordinate_traffo(x_max, y_max, extent_sref, self.geom.sref.osr_sref)
             ax.set_xlim([x_min, x_max])
             ax.set_ylim([y_min, y_max])
 
@@ -1820,7 +1821,7 @@ class RasterStack(RasterData):
             ax.add_feature(cartopy.feature.BORDERS)
 
         # get image extent in the projection of the raster geometry
-        ll_x, ll_y, ur_x, ur_y = self.raster_geom.outer_extent
+        ll_x, ll_y, ur_x, ur_y = self.geom.outer_extent
         img_extent = ll_x, ur_x, ll_y, ur_y
 
         # plot image data
@@ -1836,11 +1837,11 @@ class RasterStack(RasterData):
         if interactive:
             canvas_bounds = ax.get_position().bounds
             ax_slider = plt.axes([canvas_bounds[0], 0.05, canvas_bounds[2], 0.03], facecolor='lightgoldenrodyellow')
-            layer_idx = list(self.raster_layers.index).index(layer_id)
+            layer_idx = list(self.inventory.index).index(layer_id)
             slider = RasterStackSlider(self, ax_slider, valinit=layer_idx, valstep=1)
 
             def update(idx):
-                layer_id = list(self.raster_layers.index)[int(idx)]
+                layer_id = list(self.inventory.index)[int(idx)]
                 layer_data = self.get_layer_data(layer_id)[0]
                 # -2 because pixel dimensions (row, col) are the last two
                 slices = [0] * (len(layer_data.shape) - 2) + [slice(None)] * 2
@@ -1875,9 +1876,9 @@ class RasterStack(RasterData):
 
         data = self._data if data is None else data
         dtype = self.dtype if dtype is None else dtype
-        raster_geom = self.raster_geom if raster_geom is None else raster_geom
+        raster_geom = self.geom if raster_geom is None else raster_geom
 
-        coords = (list(self.raster_layers.index), raster_geom.y_coords, raster_geom.x_coords)
+        coords = (list(self.inventory.index), raster_geom.y_coords, raster_geom.x_coords)
 
         return convert_data_type(data, *coords, data_type=dtype, band=self.label)
 
@@ -1947,9 +1948,655 @@ class RasterStack(RasterData):
 
         return io_class, file_type
 
-    def __len__(self):
-        """ Returns amount of raster stack layers. """
-        return len(self.raster_layers)
+    def __getitem__(self, item):
+        """
+        Handles indexing of a raster layer object,
+        which is herein defined as a 3D spatial indexing via labels/layer ID's, x and y coordinates.
+
+        Parameters
+        ----------
+        item : 3-tuple
+            Tuple containing coordinate slices (e.g., ("B2", 10:100, 20:200)) or coordinate values.
+
+        Returns
+        -------
+        RasterStack
+            Raster stack defined by the intersection.
+        """
+        if not isinstance(item, tuple) or (isinstance(item, tuple) and len(item) != 3):
+            wrn_msg = "Index must be a tuple containing the layer id, x and y coordinates"
+            warnings.warn(wrn_msg)
+            return self
+        else:
+            if isinstance(item[0], slice):
+                start_label = item[0].start
+                end_label = item[0].stop
+                if start_label is not None and end_label is not None:
+                    start_label_idx = self.labels.index(start_label)
+                    stop_label_idx = self.labels.index(end_label)
+                    if end_label < start_label:
+                        err_msg = "First index is larger than second index."
+                        raise Exception(err_msg)
+                    # +1 because last layer id needs to be included
+                    labels = self.labels[start_label_idx:(stop_label_idx + 1)]
+                elif start_label is not None:
+                    start_label_idx = self.labels.index(start_label)
+                    labels = self.labels[start_label_idx:]
+                elif end_label is not None:
+                    stop_label_idx = self.labels.index(end_label)
+                    labels = self.labels[:(stop_label_idx + 1)]
+                else:
+                    labels = self.labels
+            else:
+                labels = [item[0]]
+
+        intsct_raster_geom = self.geom[item[1:]]
+
+        return self.crop(geom=intsct_raster_geom, layer_ids=labels, inplace=False)
+
+
+class RasterMosaic(object):
+    """ ."""
+    def __init__(self, raster_stacks, raster_grid=None, dtype="numpy", io=None, label=None,
+                 parent=None):
+
+        self.dtype = dtype
+        self.io = io
+        self.label = label
+        self.parent = parent
+
+        if isinstance(raster_stacks, list):
+            spatial_ids = [raster_stack.geom.id if raster_stack.geom.id is not None else i
+                           for i, raster_stack in enumerate(raster_stacks)]
+            self.inventory = pd.Series(raster_stacks, index=spatial_ids)
+        elif isinstance(raster_stacks, (pd.Series, pd.DataFrame)):
+            self.inventory = raster_stacks
+        else:
+            err_msg = "Data type '{}' of raster stacks is not supported.".format(type(raster_stacks))
+            raise ValueError(err_msg)
+
+        if raster_grid is None:
+            raster_geoms = [raster_stack.geom for raster_stack in self.inventory.values
+                            if raster_stack.geom is not None]
+            self.grid = RasterGrid(raster_geoms)
+        else:
+            self.grid = raster_grid
+
+        # create internal raster stack
+        data = self._combine_rs_data()
+        self._raster_stack = None
+        if data is not None:
+            self._raster_stack = RasterStack.from_array(self.grid.sref, self.grid.geotrans, data, layer_ids=self.labels)
+
+    @classmethod
+    def from_list(cls, arg, rs_kwargs=None, **kwargs):
+        arg_dict = dict()
+        for i, layer in enumerate(arg):
+            arg_dict[i] = layer
+
+        return cls.from_dict(arg_dict, rs_kwargs=rs_kwargs, **kwargs)
+
+    @classmethod
+    def from_dict(cls, arg, rs_kwargs=None, **kwargs):
+        rs_kwargs = {} if rs_kwargs is None else rs_kwargs
+        inventory = cls._dict2inventory(arg, **rs_kwargs)
+
+        return cls(inventory, **kwargs)
+
+    @staticmethod
+    def _dict2inventory(mosaic_dict, **kwargs):
+        inventory = dict()
+        inventory["raster_layer"] = []
+        inventory["spatial_id"] = []
+        inventory["layer_id"] = []
+        raster_geoms = []
+        for layer_id, layer in mosaic_dict.items():
+            for elem in layer:
+                inventory["layer_id"].append(layer_id)
+                if isinstance(elem, RasterLayer):
+                    raster_layer = elem
+                elif isinstance(elem, str) and os.path.exists(elem):
+                    raster_layer = RasterLayer.from_filepath(elem, read=False)
+                else:
+                    err_msg = "Data type '{}' is not understood. " \
+                              "Only 'RasterLayer' or full file paths are allowed.".format(type(elem))
+                    raise Exception(err_msg)
+
+                inventory["raster_layer"].append(raster_layer)
+                if raster_layer.geom.id is not None:
+                    inventory["spatial_id"].append(raster_layer.geom.id)
+                else:
+                    spatial_id = None
+                    for i, geom in enumerate(raster_geoms):
+                        if geom == raster_layer.geom:
+                            spatial_id = i
+                            break
+                    if spatial_id is None:
+                        spatial_id = len(raster_geoms)
+                        raster_geoms.append(raster_layer.geom)
+                    inventory["spatial_id"].append(spatial_id)
+
+        inventory = pd.DataFrame(inventory)
+        spatial_ids = list(OrderedDict.fromkeys(inventory['spatial_id'])) # hack to get unique items but still preserving the order
+        layer_ids = list(OrderedDict.fromkeys(inventory['layer_id'])) # hack to get unique items but still preserving the order
+        sub_inventories = inventory.groupby(by="spatial_id")
+        raster_stacks = []
+        for spatial_id, sub_inventory in sub_inventories:
+            raster_layers = sub_inventory['raster_layer']
+            raster_layers.index = sub_inventory['layer_id']
+            # fill non existing data with NaN
+            raster_layers = raster_layers.reindex(layer_ids)
+            raster_stack = RasterStack(raster_layers, **kwargs)
+            raster_stack.geom.id = spatial_id
+            raster_stacks.append(raster_stack)
+
+        return pd.Series(raster_stacks, index=spatial_ids)
+
+    @property
+    def data(self):
+        """ numpy.ndarray or xarray.Dataset : Retrieves data in the requested data format. """
+        return self._raster_stack.data
+
+    @property
+    def parent_root(self):
+        """ RasterData : Finds and returns the root/original parent `RasterData`. """
+        raster_data = self
+        while raster_data.parent is not None:
+            raster_data = raster_data.parent
+        return raster_data
+
+    @property
+    def shape(self):
+        """
+        3-tuple : Shape of the mosaic defined as number of pixel layers, number or pixel rows and
+        number pixel columns.
+        """
+        return len(self.inventory), self.grid.geom.n_rows, self.grid.geom.n_cols
+
+    @property
+    def labels(self):
+        return list(self.inventory['raster_stack'].iloc[0].inventory.index)  # take first raster stack as a reference
+
+
+    def load(self, band=None, read_kwargs=None, dtype=None, decode=True, decode_kwargs=None, inplace=False):
+        loaded_raster_stacks = []
+        for raster_stack in self.inventory['raster_stack']:
+            loaded_raster_stacks.append(raster_stack.load(band=band, read_kwargs=read_kwargs, dtype=dtype, decode=decode,
+                                                          decode_kwargs=decode_kwargs, inplace=False))
+
+        loaded_inventory = pd.Series({'raster_stack': loaded_raster_stacks}, index=self.inventory.index)
+        raster_mosaic = RasterMosaic(loaded_inventory, raster_grid=self.grid, dtype=dtype, label=self.label,
+                                     parent=self)
+        if inplace:
+            self.dtype = raster_mosaic.dtype
+            self._raster_stack = raster_mosaic._raster_stack
+            return self
+        else:
+            return raster_mosaic
+
+    def load_by_coords(self, x, y, sref=None, band=None, dtype=None, px_origin="ul", decode=True,
+                       decode_kwargs=None, inplace=False):
+        """
+        Reads data/one pixel according to the given coordinates.
+
+        Parameters
+        ----------
+        x : float
+            World system coordinate in x direction.
+        y : float
+            World system coordinate in y direction.
+        sref : geospade.spatial_ref.SpatialRef or osr.SpatialReference, optional
+            Spatial reference of the coordinates.
+            Has to be given if the spatial reference is different than the spatial reference of the raster data.
+            Note: `sref` is used in the decorator `_any_geom2ogr_geom`.
+        slices : tuple, optional
+            Additional array slices for all the dimensions coming before the spatial indexing via pixels.
+        band : str or int, optional
+            Defines a band or a data variable name. The default behaviour is to take `self.label`.
+            If `self.label` is also None, then all available bands are loaded.
+        dtype : str, optional
+            Data type of the returned array-like structure (default is None -> class variable `data_type` is used).
+            It can be:
+                - 'xarray': loads data as an xarray.DataSet
+                - 'numpy': loads data as a numpy.ndarray
+        px_origin : str, optional
+            Defines the world system origin of the pixel. It can be:
+                - upper left ("ul", default)
+                - upper right ("ur")
+                - lower right ("lr")
+                - lower left ("ll")
+                - center ("c")
+        decode : bool, optional
+            If true, data is decoded according to the class method `decode` (default is True).
+        decode_kwargs: dict, optional
+            Keyword arguments for the decoder.
+        inplace : bool, optional
+            If true, the current `RasterData` instance will be modified.
+            If false, the loaded data will be returned (default).
+
+        Returns
+        -------
+        RasterData :
+            `RasterData` object containing data referring to the given coordinates.
+        """
+        grid = self.grid.intersection_by_coords(x, y, sref=sref)
+        spatial_id = grid.tile_ids[0]
+        raster_stack = self.inventory["raster_stack"].loc[spatial_id]
+
+        poi = ogr.Geometry(ogr.wkbPoint)
+        poi.AddPoint(x, y)
+        if self.data is not None and self._raster_stack.geom.within(poi, sref=sref):
+            loaded_raster_stack = self._raster_stack.load_by_coords(x, y, sref=sref, band=band, dtype=dtype,
+                                                                    px_origin=px_origin, decode=decode,
+                                                                    decode_kwargs=decode_kwargs, inplace=False)
+            loaded_inventory = pd.Series({'raster_stack': [raster_stack]}, index=[spatial_id])
+            raster_mosaic = RasterMosaic(loaded_inventory, raster_grid=grid, dtype=dtype, label=self.label,
+                                         parent=self)
+            raster_mosaic._raster_stack = loaded_raster_stack
+
+        else:
+            loaded_raster_stack = raster_stack.load_by_coords(x, y, sref=sref, band=band, dtype=dtype,
+                                                              px_origin=px_origin, decode=decode,
+                                                              decode_kwargs=decode_kwargs, inplace=False)
+            loaded_inventory = pd.Series({'raster_stack': [loaded_raster_stack]}, index=[spatial_id])
+            raster_mosaic = RasterMosaic(loaded_inventory, raster_grid=grid, dtype=dtype, label=self.label,
+                                         parent=self)
+
+        if inplace:
+            self.grid = grid
+            self.dtype = raster_mosaic.dtype
+            self._raster_stack = raster_mosaic._raster_stack
+            return self
+        else:
+            return raster_mosaic
+
+    @_any_geom2ogr_geom
+    def load_by_geom(self, geom, sref=None, band=None, dtype=None, apply_mask=False, decode=True,
+                     decode_kwargs=None, buffer=0, inplace=False):
+        """
+        Reads data according to the given geometry/region of interest.
+
+        Parameters
+        ----------
+        geom : geospade.definition.RasterGeometry or ogr.Geometry or shapely.geometry or list or tuple
+            Other geometry used for cropping the data.
+        sref : geospade.spatial_ref.SpatialRef or osr.SpatialReference, optional
+            Spatial reference of the coordinates.
+            Has to be given if the spatial reference is different than the spatial reference of the raster data.
+            Note: `sref` is used in the decorator `_any_geom2ogr_geom`.
+        band : str or int, optional
+            Defines a band or a data variable name. The default behaviour is to take `self.label`.
+            If `self.label` is also None, then all available bands are loaded.
+        dtype : str, optional
+            Data type of the returned array-like structure (default is None -> class variable `data_type` is used).
+            It can be:
+                - 'xarray': loads data as an xarray.DataSet
+                - 'numpy': loads data as a numpy.ndarray
+        apply_mask : bool, optional
+            If true, a mask is applied for data points being not inside the given geometry (default is False).
+        decode : bool, optional
+            If true, data is decoded according to the class method `decode` (default is True).
+        decode_kwargs: dict, optional
+            Keyword arguments for the decoder.
+        buffer : int, optional
+            Pixel buffer for crop geometry (default is 0).
+        inplace : bool, optional
+            If true, the current `RasterData` instance will be modified.
+            If false, the loaded data will be returned (default).
+
+        Returns
+        -------
+        RasterData :
+            `RasterData` object containing data referring to the given geometry.
+        """
+        grid = self.grid.intersection_by_geom(geom, sref=sref)
+        spatial_ids = grid.tile_ids
+        inventory = self.inventory.loc[spatial_ids]
+        raster_stacks = inventory['raster_stack']
+
+        if self.data is not None and self._raster_stack.geom.within(geom, sref=sref):
+            loaded_raster_stack = self._raster_stack.load_by_geom(band=band, dtype=dtype, apply_mask=apply_mask,
+                                                                  decode=decode, decode_kwargs=decode_kwargs,
+                                                                  buffer=buffer, inplace=False)
+            loaded_inventory = pd.Series({'raster_stack': raster_stacks}, index=spatial_ids)
+            raster_mosaic = RasterMosaic(loaded_inventory, raster_grid=grid, dtype=dtype, label=self.label,
+                                         parent=self)
+            raster_mosaic._raster_stack = loaded_raster_stack
+        else:
+            loaded_raster_stacks = []
+            for raster_stack in inventory['raster_stack']:
+                loaded_raster_stacks.append(raster_stack.load_by_geom(band=band, dtype=dtype, apply_mask=apply_mask,
+                                                                      decode=decode, decode_kwargs=decode_kwargs,
+                                                                      buffer=buffer, inplace=False))
+            loaded_inventory = pd.Series({'raster_stack': loaded_raster_stacks}, index=spatial_ids)
+            raster_mosaic = RasterMosaic(loaded_inventory, raster_grid=grid, dtype=dtype, label=self.label,
+                                         parent=self)
+        if inplace:
+            self.grid = grid
+            self.dtype = raster_mosaic.dtype
+            self._raster_stack = raster_mosaic._raster_stack
+            return self
+        else:
+            return raster_mosaic
+
+    def load_by_pixel(self, row, col, n_rows=1, n_cols=1, band=None, dtype=None, decode=True,
+                      decode_kwargs=None, inplace=False):
+        """
+        Reads data according to the given pixel extent.
+
+        Parameters
+        ----------
+        row : int
+            Pixel row number.
+        col : int
+            Pixel column number.
+        n_rows : int, optional
+            Number of rows to read (default is 1).
+        n_cols : int, optional
+            Number of cols to read (default is 1).
+        band : str or int, optional
+            Defines a band or a data variable name. The default behaviour is to take `self.label`.
+            If `self.label` is also None, then all available bands are loaded.
+        dtype : str, optional
+            Data type of the returned array-like structure (default is None -> class variable `data_type` is used).
+            It can be:
+                - 'xarray': loads data as an xarray.Dataset
+                - 'numpy': loads data as a numpy.ndarray
+        decode : bool, optional
+            If true, data is decoded according to the class method `decode` (default is True).
+        decode_kwargs: dict, optional
+            Keyword arguments for the decoder.
+        inplace : bool, optional
+            If true, the current `RasterData` instance will be modified.
+            If false, the loaded data will be returned (default).
+
+        Returns
+        -------
+        RasterData :
+            `RasterData` object containing data referring to the given pixel extent.
+        """
+        grid = self.grid.intersection_by_pixels(row, col, n_rows=n_rows, n_cols=n_cols)
+        spatial_ids = grid.tile_ids
+        inventory = self.inventory.loc[spatial_ids]
+        raster_stacks = inventory['raster_stack']
+
+        if self.data is not None and self._raster_stack.geom.within(grid.geom):
+            loaded_raster_stack = self._raster_stack.load_by_pixel(row, col, n_rows=n_rows, n_cols=n_cols, band=band,
+                                                                   dtype=dtype, decode=decode,
+                                                                   decode_kwargs=decode_kwargs, inplace=False)
+            loaded_inventory = pd.Series({'raster_stack': raster_stacks}, index=spatial_ids)
+            raster_mosaic = RasterMosaic(loaded_inventory, raster_grid=grid, dtype=dtype, label=self.label,
+                                         parent=self)
+            raster_mosaic._raster_stack = loaded_raster_stack
+        else:
+            loaded_raster_stacks = []
+            for raster_stack in inventory['raster_stack']:
+                loaded_raster_stacks.append(raster_stack.load_by_geom(row, col, n_rows=n_rows, n_cols=n_cols, band=band,
+                                                                      dtype=dtype, decode=decode,
+                                                                      decode_kwargs=decode_kwargs, inplace=False))
+            loaded_inventory = pd.Series({'raster_stack': loaded_raster_stacks}, index=spatial_ids)
+            raster_mosaic = RasterMosaic(loaded_inventory, raster_grid=grid, dtype=dtype, label=self.label,
+                                         parent=self)
+        if inplace:
+            self.grid = grid
+            self.dtype = raster_mosaic.dtype
+            self._raster_stack = raster_mosaic._raster_stack
+            return self
+        else:
+            return raster_mosaic
+
+    def crop(self, geom=None, sref=None, layer_ids=None, apply_mask=False, buffer=0, inplace=False):
+        """
+        Crops the loaded data by a geometry and/or layer ID's. In addition, a mask can be applied with a certain buffer.
+        `inplace` determines, whether a new object is returned or the cropping happens on the object instance.
+
+        Parameters
+        ----------
+        geom : geospade.definition.RasterGeometry or ogr.Geometry or shapely.geometry or list or tuple, optional
+            Geometry defining the data extent of interest.
+        sref : geospade.spatial_ref.SpatialRef or osr.SpatialReference, optional
+            Spatial reference of the geometry.
+            Has to be given if the spatial reference is different than the spatial reference of the raster data.
+            Note: `sref` is used in the decorator `_any_geom2ogr_geom`.
+        layer_ids : object or list of objects
+            Layer ID's representing the labels of the stack dimension (used for selecting a subset).
+        apply_mask : bool, optional
+            If true, a mask is applied for data points being not inside the given geometry (default is False).
+        buffer : int, optional
+            Pixel buffer for crop geometry (default is 0).
+        inplace : bool, optional
+            If true, the current instance will be modified.
+            If false, a new `RasterData` instance will be created (default).
+
+        Returns
+        -------
+        RasterStack
+            `RasterStack` object only containing data within the intersection.
+            If the `RasterStack` and the given geometry do not intersect, None is returned.
+        """
+
+        if geom is not None:
+            if self.grid.intersects(geom, sref=sref):
+                grid = self.grid.intersection_by_geom(geom, sref=sref)
+                spatial_ids = grid.tile_ids
+                inventory = self.inventory.loc[spatial_ids]
+                raster_stacks = inventory['raster_stack']
+            else:
+                wrn_mg = "The given geometry does not intersect with the raster mosaic."
+                warnings.warn(wrn_mg)
+        else:
+            raster_stacks = self.inventory['raster_stack']
+            grid = self.grid
+
+        if layer_ids is not None:
+            for raster_stack in raster_stacks:
+                raster_stack.inventory = raster_stack.inventory[layer_ids]
+
+        crp_raster_stack = self._raster_stack.crop(geom=geom, sref=sref, layer_ids=layer_ids, apply_mask=apply_mask,
+                                               buffer=buffer, inplace=False)
+
+        raster_mosaic = RasterMosaic(raster_stacks, raster_grid=grid, dtype=self.dtype, label=self.label,
+                                     parent=self)
+        if inplace:
+            self.grid = grid
+            self._raster_stack = crp_raster_stack
+            return self
+        else:
+            raster_mosaic._raster_stack = crp_raster_stack
+            return raster_mosaic
+
+    def get_layer_data(self, layer_ids, dtype="numpy"):
+        """
+        Returns 2D array-like data in a list corresponding to the given list of layer ID's.
+
+        Parameters
+        ----------
+        layer_ids : object
+            Layer ID's representing the labels of the stack dimension.
+        dtype : str, optional
+            Data type of the returned 2D array-like structure. It can be:
+                - 'xarray': loads data as an xarray.DataSet
+                - 'numpy': loads data as a numpy.ndarray (default)
+
+        Returns
+        -------
+        List of xarray.DataSets or numpy.ndarrays
+        """
+        if not isinstance(layer_ids, list):
+            layer_ids = [layer_ids]
+
+        layer_data = []
+        for layer_id in layer_ids:
+            if self.data is None:
+                data = self._combine_rl_data(layer_id, dtype=dtype)
+            else:
+                data = self._raster_stack.get_layer_data(layer_id, dtype=dtype)
+            layer_data.append(data)
+
+        return layer_data
+
+    def _combine_rl_data(self, layer_id, dtype="numpy"):
+        raster_layers = [raster_stack.inventory['raster_layer'].loc[layer_id]
+                         for raster_stack in self.inventory['raster_stack']]
+        data = None
+        if dtype == "numpy":
+            data = np.ones((self.shape[-2], self.shape[-1]))
+            for raster_layer in raster_layers:
+                min_col, min_row, max_col, max_row = rel_extent((self.grid.geom.ul_x,
+                                                                 self.grid.geom.ul_y),
+                                                                raster_layer.geom.inner_extent,
+                                                                x_pixel_size=self.grid.geom.x_pixel_size,
+                                                                y_pixel_size=self.grid.geom.y_pixel_size)
+                if raster_layer.data is None:
+                    raster_layer.load(dtype=dtype, inplace=True)
+
+                data[min_row:(max_row + 1), min_col:(max_col + 1)] = raster_layer.data
+        elif dtype == "xarray":
+            xr_ds = []
+            for raster_layer in raster_layers:
+                if raster_layer.data is None:
+                    raster_layer.load(dtype=dtype, inplace=True)
+                xr_ds.append(raster_layer.data)
+            data = xr.combine_by_coords(xr_ds)
+
+        return data
+
+    def _combine_rs_data(self):
+        data = None
+        data_is_loaded = any([raster_stack.data is not None for raster_stack in self.inventory['raster_stack']])
+        if data_is_loaded:
+            if self.dtype == "numpy":
+                data = np.ones(self.shape)
+                for raster_stack in self.inventory['raster_stack']:
+                    min_col, min_row, max_col, max_row = rel_extent((self.grid.geom.ul_x,
+                                                                     self.grid.geom.ul_y),
+                                                                    raster_stack.geom.inner_extent,
+                                                                    x_pixel_size=self.grid.geom.x_pixel_size,
+                                                                    y_pixel_size=self.grid.geom.y_pixel_size)
+                    if raster_stack.data is not None:
+                        data[:, min_row:(max_row+1), min_col:(max_col+1)] = raster_stack.data
+                        # delete data and close IO class
+                        raster_stack.close()
+            elif self.dtype == "xarray":
+                xr_ds = []
+                for raster_stack in self.inventory['raster_stack']:
+                    if raster_stack.data is not None:
+                        xr_ds.append(raster_stack.data)
+                        raster_stack.close()
+                data = xr.combine_by_coords(xr_ds)
+
+        return data
+
+    # TODO: add more functionalities and options
+    def plot(self, layer_id=None, ax=None, proj=None, extent=None, extent_sref=None, cmap='viridis',
+             interactive=False, add_country_borders=True, add_grid=True, grid_kwargs=None):
+        """
+        Plots the data on a map that uses a projection if provided.
+        If not, the map projection defaults to the spatial reference
+        in which the data are provided. The extent of the data is specified by `extent`.
+        If an extent is not provided, it defaults to the bbox of the data's geometry.
+        If provided, one can also specify the spatial reference of the extent that is being parsed, otherwise it is
+        assumed that the spatial reference of the extent is the same as the spatial reference of the data.
+
+        Parameters
+        ----------
+        ax :  matplotlib.pyplot.axes
+            Pre-defined Matplotlib axis.
+        layer_id : object
+            Layer ID representing one labels of the stack dimension.
+        proj :  cartopy.crs.Projection or its subclass, optional
+            Projection of the map. The figure will be drawn in
+            this spatial reference. If omitted, the spatial reference in which
+            the data are present is used.
+        extent : 4 tuple, optional
+            Extent of the projection (x_min, x_max, y_min, y_max). If omitted, the bbox of the data is used.
+        extent_sref : geospade.spatial_ref.SpatialRef or osr.SpatialReference, optional
+            Spatial reference of the coordinates.
+            Has to be given if the spatial reference is different than the spatial reference of the raster data.
+        cmap : matplotlib.colors.Colormap or string, optional
+            Colormap for displaying the data (default is 'viridis').
+        interactive : bool, optional
+            If true, one can interactively switch between different raster stack layers in the plot.
+            If false, only the initial raster stack layer will be shown (default is False).
+        add_country_borders : bool, optional
+            If true, country borders from Natural Earth (1:110m) are added to the map (default is True).
+
+        Returns
+        -------
+        matplotlib.axes.Axes, RasterStackSlider
+        """
+
+        # loading Matplotlib module if it is available
+        if 'matplotlib' in sys.modules:
+            import matplotlib.pyplot as plt
+        else:
+            err_msg = "Module 'matplotlib' is mandatory for plotting a RasterGeometry object."
+            raise ImportError(err_msg)
+
+        if layer_id is None:
+            layer_id = self.labels[0]  # take the first layer as a default value
+
+        # create new figure if it is necessary
+        if ax is None:
+            fig = plt.figure()
+            ax = fig.add_subplot(111, projection=proj)
+
+        # get projection definition from raster geometry
+        if proj is None:
+            proj = self.grid.geom.to_cartopy_crs()
+
+        # limit axes to the given extent in the projection
+        if extent:
+            x_min, y_min, x_max, y_max = extent
+            if extent_sref:
+                x_min, y_min = coordinate_traffo(x_min, y_min, extent_sref, self.grid.sref.osr_sref)
+                x_max, y_max = coordinate_traffo(x_max, y_max, extent_sref, self.grid.sref.osr_sref)
+            ax.set_xlim([x_min, x_max])
+            ax.set_ylim([y_min, y_max])
+
+        # get colourmap
+        if isinstance(cmap, str):
+            cmap = cm.get_cmap(cmap)
+
+        if add_country_borders:
+            ax.coastlines()
+            ax.add_feature(cartopy.feature.BORDERS)
+
+        # get image extent in the projection of the raster geometry
+        ll_x, ll_y, ur_x, ur_y = self.grid.outer_extent
+        img_extent = ll_x, ur_x, ll_y, ur_y
+
+        # plot image data
+        layer_data = self.get_layer_data(layer_id)[0]
+        # -2 because pixel dimensions (row, col) are the last two
+        slices = [0] * (len(layer_data.shape) - 2) + [slice(None)] * 2
+        img = ax.imshow(layer_data[tuple(slices)], extent=img_extent, origin='upper', transform=proj, cmap=cmap)
+
+        ax.set_aspect('equal', 'box')
+
+        if add_grid:
+            grid_kwargs = {} if grid_kwargs is None else grid_kwargs
+            ax = self.grid.plot(ax, **grid_kwargs)
+
+        # interactive plot settings
+        slider = None
+        if interactive:
+            canvas_bounds = ax.get_position().bounds
+            ax_slider = plt.axes([canvas_bounds[0], 0.05, canvas_bounds[2], 0.03], facecolor='lightgoldenrodyellow')
+            layer_idx = self.labels.index(layer_id)
+            slider = RasterStackSlider(self, ax_slider, valinit=layer_idx, valstep=1)
+
+            def update(idx):
+                layer_id = self.labels[int(idx)]
+                layer_data = self.get_layer_data(layer_id)[0]
+                # -2 because pixel dimensions (row, col) are the last two
+                slices = [0] * (len(layer_data.shape) - 2) + [slice(None)] * 2
+                img.set_data(layer_data[tuple(slices)])
+                fig.canvas.draw_idle()
+
+            slider.on_changed(update)
+
+        return ax, slider
 
     def __getitem__(self, item):
         """
@@ -1970,140 +2617,30 @@ class RasterStack(RasterData):
             raise ValueError('Index must be a tuple containing the layer id, x and y coordinates.')
         else:
             if isinstance(item[0], slice):
-                start_layer_id = item[0].start
-                stop_layer_id = item[0].stop
-                all_layer_ids = list(self.raster_layers.index)
-                if start_layer_id is not None and stop_layer_id is not None:
-                    start_layer_idx = all_layer_ids.index(start_layer_id)
-                    stop_layer_idx = all_layer_ids.index(stop_layer_id)
-                    if stop_layer_id < start_layer_id:
+                start_label = item[0].start
+                end_label = item[0].stop
+                if start_label is not None and end_label is not None:
+                    start_label_idx = self.labels.index(start_label)
+                    stop_label_idx = self.labels.index(end_label)
+                    if end_label < start_label:
                         err_msg = "First index is larger than second index."
                         raise Exception(err_msg)
                     # +1 because last layer id needs to be included
-                    layer_ids = all_layer_ids[start_layer_idx:(stop_layer_idx+1)]
-                elif start_layer_id is not None:
-                    start_layer_idx = all_layer_ids.index(start_layer_id)
-                    layer_ids = all_layer_ids[start_layer_idx:]
-                elif stop_layer_id is not None:
-                    stop_layer_idx = all_layer_ids.index(stop_layer_id)
-                    layer_ids = all_layer_ids[:(stop_layer_idx+1)]
+                    labels = self.labels[start_label_idx:(stop_label_idx + 1)]
+                elif start_label is not None:
+                    start_label_idx = self.labels.index(start_label)
+                    labels = self.labels[start_label_idx:]
+                elif end_label is not None:
+                    stop_label_idx = self.labels.index(end_label)
+                    labels = self.labels[:(stop_label_idx + 1)]
                 else:
-                    layer_ids = all_layer_ids
+                    labels = self.labels
             else:
-                layer_ids = [item[0]]
+                labels = [item[0]]
 
-        intsct_raster_geom = self.raster_geom[item[1:]]
+        intsct_raster_geom = self.grid.geom[item[1:]]
 
-        return self.crop(geom=intsct_raster_geom, layer_ids=layer_ids, inplace=False)
-
-
-class RasterMosaic(object):
-
-    def __init__(self, raster_stacks, grid=None, aggregator=None):
-
-        self.aggregator = aggregator
-        self.raster_stacks = raster_stacks
-
-        raster_geoms = [raster_stack.geometry for raster_stack in self.raster_stacks
-                        if raster_stack.geometry is not None]
-
-        if grid is None:
-            self.grid = RasterGrid(raster_geoms)
-        else:
-            self.grid = grid
-
-        self.geometry = RasterGeometry.get_common_geometry(raster_geoms)
-
-    @classmethod
-    def from_df(cls, arg, **kwargs):
-        pass
-
-    @classmethod
-    def from_list(cls, arg, **kwargs):
-        arg_dict = dict()
-        for i, layer in enumerate(arg):
-            arg_dict[i] = layer
-
-        return cls.from_dict(arg_dict, **kwargs)
-
-    @classmethod
-    def from_dict(cls, arg, **kwargs):
-        structure = RasterMosaic._dict2structure(arg)
-        raster_stacks = cls._build_raster_stacks(structure)
-
-        return cls(raster_stacks)
-
-    @staticmethod
-    def _dict2structure(struct_dict):
-        structure = dict()
-        structure["raster_data"] = []
-        structure["spatial_id"] = []
-        structure["layer_id"] = []
-        geoms = []
-        for layer_id, layer in struct_dict.items():
-            for elem in layer:
-                structure['layer_id'].append(layer_id)
-                if isinstance(elem, RasterData):
-                    rd = elem
-                elif isinstance(elem, str) and os.path.exists(elem):
-                    rd = RasterData.from_file(elem, mode=None)
-                else:
-                    raise Exception("Data type '{}' is not understood.".format(type()))
-
-                structure['raster_data'].append(rd)
-                if rd.geometry.id is not None:
-                    structure['spatial_id'].append(rd.geometry.id)
-                else:
-                    spatial_id = None
-                    for i, geom in enumerate(geoms):
-                        if geom == rd.geometry:
-                            spatial_id = i
-                            break
-                    if spatial_id is None:
-                        spatial_id = len(geoms)
-                        geoms.append(rd.geometry)
-                    structure['spatial_id'].append(spatial_id)
-
-        return pd.DataFrame(structure)
-
-    @staticmethod
-    def _build_raster_stacks(structure):
-        struct_groups = structure.groupby(by="spatial_id")
-        raster_stacks = {'raster_stack': []}
-        spatial_ids = []
-        for struct_group in struct_groups:
-            raster_datas = struct_group['raster_data']
-            raster_datas.set_index(struct_group['layer_id'], inplace=True)
-            raster_stacks['raster_stack'].append(RasterStack(raster_datas))
-            spatial_ids.append(struct_group['spatial_id'])
-
-        return pd.Series(raster_stacks, index=spatial_ids)
-
-    @_any_geom2ogr_geom
-    def read_by_geom(self, geom, osr_sref=None, band=1, dtype='numpy', **kwargs):
-        raster_grid = self.grid.crop(geom)
-        geometry = self.geometry.crop(geom)
-        spatial_ids = raster_grid.geom_ids
-        raster_stacks = [raster_stack.load_by_geom(geom, osr_sref=osr_sref, dtype=dtype, band=band, inplace=False, **kwargs)
-                         for raster_stack in self.raster_stacks[spatial_ids]]
-
-        return RasterStack.from_others(raster_stacks, dtype=dtype, geometry=geometry)
-
-    def read_by_coord(self, x, y, osr_sref=None, band=1, dtype='numpy', **kwargs):
-        point = Point((x, y))
-        return self.read_by_geom(point, osr_sref=osr_sref, band=band, dtype=dtype, **kwargs)
-
-    def read(self, col, row, col_size=1, row_size=1, band=1, dtype="numpy", **kwargs):
-        if col_size == 1 and row_size == 1:
-            x, y = ij2xy(col, row, self.geometry.gt)
-            return self.read_by_coord(x, y, band=band, dtype=dtype, **kwargs)
-        else:
-            max_col = col + col_size
-            max_row = row + row_size
-            min_x, min_y = ij2xy(col, max_row, self.geometry.gt)
-            max_x, max_y = ij2xy(max_col, row, self.geometry.gt)
-            bbox = [(min_x, min_y), (max_x, max_y)]
-            return self.read_by_geom(bbox, band=band, dtype=dtype, **kwargs)
+        return self.crop(geom=intsct_raster_geom, layer_ids=labels, inplace=False)
 
 
 if __name__ == '__main__':

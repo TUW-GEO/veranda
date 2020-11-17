@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 import cartopy.crs as ccrs
+from datetime import datetime, timedelta
 
 from shapely.geometry import Polygon
 
@@ -14,6 +15,7 @@ from geospade.spatial_ref import SpatialRef
 from geospade.operation import xy2ij
 from geospade.operation import coordinate_traffo
 from geospade.operation import rel_extent
+from geospade import DECIMALS
 
 from veranda.io.geotiff import GeoTiffFile
 from veranda.io.netcdf import NcFile
@@ -21,6 +23,7 @@ from veranda.io.stack import GeoTiffRasterStack
 from veranda.io.stack import NcRasterStack
 from veranda.raster import RasterLayer
 from veranda.raster import RasterStack
+from veranda.raster import RasterMosaic
 
 # TODO: join common parts of RasterLayer and RasterStack
 
@@ -239,14 +242,14 @@ class RasterLayerTest(unittest.TestCase):
         geom_ogr.AssignSpatialReference(self.sref.osr_sref)
 
         # use RasterGeometry functionalities for setting up the mask and get the intersection boundaries
-        new_geom = self.np_raster_layer.raster_geom & geom_ogr
+        new_geom = self.np_raster_layer.geom & geom_ogr
 
-        min_col, min_row, _, _ = rel_extent((self.np_raster_layer.raster_geom.parent_root.ul_x,
-                                             self.np_raster_layer.raster_geom.parent_root.ul_y),
+        min_col, min_row, _, _ = rel_extent((self.np_raster_layer.geom.parent_root.ul_x,
+                                             self.np_raster_layer.geom.parent_root.ul_y),
                                             new_geom.inner_extent,
                                             x_pixel_size=self.x_pixel_size,
                                             y_pixel_size=self.y_pixel_size)
-        mask = self.np_raster_layer.raster_geom.create_mask(geom_ogr)
+        mask = self.np_raster_layer.geom.create_mask(geom_ogr)
         pixel_values_ref = self.np_data[min_row:self.rows, min_col:self.cols]
         pixel_values_masked_ref = np.ma.array(pixel_values_ref, mask=mask[min_row:self.rows, min_col:self.cols])
 
@@ -348,7 +351,7 @@ class RasterLayerTest(unittest.TestCase):
         except:
             assert True
 
-
+# TODO: test multilayer NetCDF file
 class RasterStackTest(unittest.TestCase):
     """ Testing all functionalities of `RasterData`. """
 
@@ -512,34 +515,82 @@ class RasterStackTest(unittest.TestCase):
         except:
             assert True
 
+
+class RasterMosaicTest(unittest.TestCase):
+    """ Testing all functionalities of `RasterData`. """
+
+    @classmethod
+    def setUpClass(cls):
+        """ Creates temporary data folder. """
+
+        if not os.path.exists(tmp_dirpath):
+            os.makedirs(tmp_dirpath)
+
+    @classmethod
+    def tearDownClass(cls):
+        """ Deletes temporary data folder. """
+
+        if os.path.exists(tmp_dirpath):
+            shutil.rmtree(tmp_dirpath)
+
+    def setUp(self):
+        """
+        Sets up needed test data.
+        """
+
+        self.tearDownClass()
+        self.setUpClass()
+
+        # initialise random variables
+        ul_x = random.randrange(-50., 50., 5.)
+        ul_y = random.randrange(0., 60., 5.)
+        n_grid_rows = random.randint(1, 5)
+        n_grid_cols = random.randint(1, 5)
+        x_pixel_size = round(random.uniform(0.01, 0.5), 2)
+        y_pixel_size = round(random.uniform(-0.5, -0.01), 2)
+        n_rows = random.randint(10, 1000)
+        n_cols = random.randint(10, 1000)
+        days = random.randint(1, 10)
+        start_date = datetime.utcnow()
+        labels = [start_date + timedelta(days=day) for day in range(days)]
+
+        # initialise static variables
+        sref = SpatialRef(4326)
+
+        self.data = np.zeros((len(labels), n_rows*n_grid_rows, n_cols*n_grid_cols))
+        self.filelist = []
+        self.filedict = {}
+        for i, label in enumerate(labels):
+            self.filedict[label] = []
+            self.filelist.extend([[]])
+            for grid_row in range(n_grid_rows):
+                for grid_col in range(n_grid_cols):
+                    ul_x_i = round(ul_x + (grid_col*n_cols)*x_pixel_size, DECIMALS)
+                    ul_y_i = round(ul_y + (grid_row*n_rows)*y_pixel_size, DECIMALS)
+                    geotrans = (ul_x_i, x_pixel_size, 0, ul_y_i, 0, y_pixel_size)
+
+                    row = grid_row*n_rows
+                    col = grid_col*n_cols
+                    max_row = row + n_rows
+                    max_col = col + n_cols
+                    data_i = np.random.rand(n_rows, n_cols)
+                    self.data[i, row:max_row, col:max_col] = data_i
+                    filename = "{}_{}_{}.tif".format(label.strftime("%Y%m%d"), grid_row, grid_col)
+                    filepath = os.path.join(tmp_dirpath, filename)
+                    self.filelist[-1].append(filepath)
+                    self.filedict[label].append(filepath)
+
+                    with GeoTiffFile(filepath, mode='w', geotrans=geotrans, sref=sref.wkt) as gt_file:
+                        gt_file.write(data_i)
+
+    def test_from_dict(self):
+        """  """
+        raster_mosaic = RasterMosaic.from_dict(self.filedict)
+
+        assert list(self.filedict.keys()) == raster_mosaic.labels
+
 if __name__ == '__main__':
-    unittest.main()
-    #tester = RasterLayerTest()
-    #tester.setUpClass()
-    #tester.setUp()
-    # tester.test_from_array()
-    # tester.setUp()
-    #tester.test_from_filepath()
-    # tester.setUp()
-    # tester.test_from_io()
-    # tester.setUp()
-    # tester.test_data()
-    # tester.setUp()
-    # tester.test_crop()
-    # tester.setUp()
-    #tester.test_load()
-    # tester.setUp()
-    # tester.test_load_by_coords()
-    # tester.setUp()
-    #tester.test_load_by_geom()
-    # tester.setUp()
-    #tester.test_load_by_pixels()
-    # tester.setUp()
-    # tester.test_plot()
-    # tester.setUp()
-    # tester.test_write()
-    # tester.setUp()
-    # tester.test_wrong_data()
-    #tester = RasterStackTest()
-    #tester.setUp()
-    #tester.test_plot()
+    #unittest.main()
+    tester = RasterMosaicTest()
+    tester.setUp()
+    tester.test_from_dict()
