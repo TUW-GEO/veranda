@@ -651,8 +651,8 @@ class NcRasterStack:
         #inclusive left, exclusive right
         #stacks are smaller than 1D
         if any(x in stack_size for x in ['H','min','T']):
-            dup_stack_filenames = ds['time'].to_index().strftime(stack_size)
-        else:
+            dup_stack_filenames = ds['time'].to_index().floor(stack_size)
+	else:
             dup_stack_filenames = ds['time'].to_index().strftime(stack_size)
 
         stack_filenames, index = np.unique(dup_stack_filenames, return_index=True)
@@ -664,7 +664,7 @@ class NcRasterStack:
             time_sel = np.arange(index[i], index[i + 1])
 
             if any(x in stack_size for x in ['H','min','T']):
-                timestamp=ds['time'][[index[i]]].to_index().floor(stack_size)[0].to_datetime64()
+                timestamp = ds['time'][[index[i]]].to_index().floor(stack_size)[0].to_datetime64()
             else:
                 timestamp = datetime.strptime(ds['time'][[index[i]]].to_index().strftime(stack_size)[0], stack_size)
             timestamps.append(timestamp)
