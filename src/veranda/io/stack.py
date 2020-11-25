@@ -652,7 +652,7 @@ class NcRasterStack:
         #stacks are smaller than 1D
         if any(x in stack_size for x in ['H','min','T']):
             dup_stack_filenames = ds['time'].to_index().floor(stack_size)
-	else:
+        else:
             dup_stack_filenames = ds['time'].to_index().strftime(stack_size)
 
         stack_filenames, index = np.unique(dup_stack_filenames, return_index=True)
