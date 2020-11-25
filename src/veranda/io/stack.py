@@ -647,8 +647,14 @@ class NcRasterStack:
             yield timestamp, self.mfdataset[var_name][i, :, :]
 
     def write_netcdfs(self, ds, dir_path, stack_size="%Y%m", fn_prefix='', fn_suffix='.nc'):
+        
+        #inclusive left, exclusive right
+        #stacks are smaller than 1D
+        if any(x in stack_size for x in ['H','min','T']):
+            dup_stack_filenames = ds['time'].to_index().strftime(stack_size)
+        else:
+            dup_stack_filenames = ds['time'].to_index().strftime(stack_size)
 
-        dup_stack_filenames = ds['time'].to_index().strftime(stack_size)
         stack_filenames, index = np.unique(dup_stack_filenames, return_index=True)
         index = np.hstack((index, len(dup_stack_filenames)))
 
@@ -656,7 +662,11 @@ class NcRasterStack:
         timestamps = []
         for i, stack_filename in enumerate(stack_filenames):
             time_sel = np.arange(index[i], index[i + 1])
-            timestamp = datetime.strptime(ds['time'][[index[i]]].to_index().strftime(stack_size)[0], stack_size)
+
+            if any(x in stack_size for x in ['H','min','T']):
+                timestamp=ds['time'][[index[i]]].to_index().floor(stack_size)[0].to_datetime64()
+            else:
+                timestamp = datetime.strptime(ds['time'][[index[i]]].to_index().strftime(stack_size)[0], stack_size)
             timestamps.append(timestamp)
             filename = '{:}{:}{:}'.format(fn_prefix, stack_filename, fn_suffix)
             filepath = os.path.join(dir_path, filename)
