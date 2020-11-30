@@ -652,6 +652,7 @@ class NcRasterStack:
         #stacks are smaller than 1D
         if any(x in stack_size for x in ['H','min','T']):
             dup_stack_filenames = ds['time'].to_index().floor(stack_size)
+            stack_filename = pd.to_datetime(str(stack_filename)).strftime('%Y%m%d_%H%M%S')
         else:
             dup_stack_filenames = ds['time'].to_index().strftime(stack_size)
 
