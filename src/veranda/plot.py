@@ -102,8 +102,8 @@ class RasterStackSlider(AxesWidget):
         self.connect_event('button_press_event', self._update)
         self.connect_event('button_release_event', self._update)
         self.connect_event('motion_notify_event', self._update)
-        valmin_label = str(raster_stack.raster_layers.index[self.valmin])
-        valmax_label = str(raster_stack.raster_layers.index[self.valmax])
+        valmin_label = str(raster_stack.inventory.index[self.valmin])
+        valmax_label = str(raster_stack.inventory.index[self.valmax])
 
         bounds = split_axis_bounds(ax.get_position().bounds, [0.1, 0.8, 0.1])
         self.slider_ax = ax.get_figure().add_axes(bounds[1])
@@ -202,7 +202,7 @@ class RasterStackSlider(AxesWidget):
         xy[3] = val, 0
         self.poly.xy = xy
 
-        self.slider_ax.set_xlabel(self.raster_stack.raster_layers.index[int(val)])
+        self.slider_ax.set_xlabel(self.raster_stack.inventory.index[int(val)])
 
         if self.drawon:
             self.slider_ax.figure.canvas.draw_idle()

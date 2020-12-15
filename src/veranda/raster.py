@@ -32,6 +32,7 @@ from geospade.operation import coordinate_traffo
 
 
 # TODO: can we represent a rotated array with xarray?
+# TODO: where should we put this?
 # ToDO: change band to list of bands
 def convert_data_coding(data, coder, coder_kwargs=None, band=None):
     """
@@ -145,7 +146,7 @@ def convert_data_type(data, *coord_args, data_type="numpy", band=None, dim_names
     return conv_data
 
 
-# ToDO: initialise with raster geometry or rows, cols, sref, gt?
+# ToDO: initialise with raster geometry or rows, cols, sref, gt or map this via a classmethod?
 class RasterData(metaclass=abc.ABCMeta):
     """
     This class represents geo-referenced raster data. Its two main components are a geometry and data:
@@ -170,7 +171,7 @@ class RasterData(metaclass=abc.ABCMeta):
             Number of pixel rows.
         n_cols : int
             Number of pixel columns.
-        sref : geospade.spatial_ref.SpatialRef or osr.SpatialReference
+        sref : geospade.spatial_ref.SpatialRef
             Instance representing the spatial reference of the geometry.
         geotrans : 6-tuple, optional
             GDAL geotransform tuple.
@@ -186,6 +187,7 @@ class RasterData(metaclass=abc.ABCMeta):
             Defines a band or a data variable name.
         parent : RasterData, optional
             Parent `RasterData` instance.
+
         """
 
         self.geom = RasterGeometry(n_rows, n_cols, sref, geotrans)
@@ -209,18 +211,6 @@ class RasterData(metaclass=abc.ABCMeta):
         """
         pass
 
-    @data.setter
-    def data(self, data):
-        """
-        Sets internal data.
-
-        Parameters
-        ----------
-        data : numpy.ndarray or xarray.Dataset
-            Array-like object containing image pixel values.
-        """
-        pass
-
     @property
     def parent_root(self):
         """ RasterData : Finds and returns the root/original parent `RasterData`. """
@@ -237,7 +227,7 @@ class RasterData(metaclass=abc.ABCMeta):
 
         Parameters
         ----------
-        sref : geospade.spatial_ref.SpatialRef or osr.SpatialReference
+        sref : SpatialRef
             Instance representing the spatial reference of the geometry.
         geotrans : 6-tuple, optional
             GDAL geotransform tuple.
@@ -249,6 +239,26 @@ class RasterData(metaclass=abc.ABCMeta):
         Returns
         -------
         RasterData
+
+        """
+        pass
+
+    @classmethod  #TODO
+    def from_raster_geom(cls, geom, **kwargs):
+        """
+        Creates a `RasterData` object from an array-like object.
+
+        Parameters
+        ----------
+        geom : RasterGeometry
+            Raster geometry used to create a `RasterData`.
+        **kwargs
+            Keyword arguments for `RasterData` constructor, i.e. `data`, `data_type`, `io`, `label` or `parent`.
+
+        Returns
+        -------
+        RasterData
+
         """
         pass
 
@@ -276,6 +286,7 @@ class RasterData(metaclass=abc.ABCMeta):
         Returns
         -------
         RasterData
+
         """
         pass
 
@@ -299,6 +310,7 @@ class RasterData(metaclass=abc.ABCMeta):
         Returns
         -------
         RasterData
+
         """
         pass
 
@@ -333,20 +345,15 @@ class RasterData(metaclass=abc.ABCMeta):
         else:  # if it is not a string or a list of strings it is assumed that it is an IO class instance
             return cls.from_io(arg, read=read, read_kwargs=read_kwargs, **kwargs)
 
-    @_any_geom2ogr_geom
-    def crop(self, geom, sref=None, slices=None, apply_mask=False, buffer=0, inplace=False):
+    def crop(self, geom, slices=None, apply_mask=False, buffer=0, inplace=False):
         """
         Crops the data by a geometry. In addition, a mask can be applied with a certain buffer.
         `inplace` determines, whether a new object is returned or the cropping happens on the object instance.
 
         Parameters
         ----------
-        geom : geospade.definition.RasterGeometry or ogr.Geometry or shapely.geometry or list or tuple
+        geom : ogr.Geometry
             Geometry defining the data extent of interest.
-        sref : geospade.spatial_ref.SpatialRef or osr.SpatialReference, optional
-            Spatial reference of the geometry.
-            Has to be given if the spatial reference is different than the spatial reference of the raster data.
-            Note: `sref` is used in the decorator `_any_geom2ogr_geom`.
         slices: tuple, optional
             Additional array slices for all the dimensions coming before the spatial indexing via pixels.
         apply_mask : bool, optional
@@ -362,23 +369,33 @@ class RasterData(metaclass=abc.ABCMeta):
         RasterData
             `RasterData` object only containing data within the intersection.
             If the `RasterData` and the given geometry do not intersect, None is returned.
+
         """
 
         # create new geometry from the intersection
         intsct_raster_geom = self.geom & geom
 
-        if intsct_raster_geom is not None and self._data is not None:
-            min_col, min_row, max_col, max_row = rel_extent((self.geom.ul_x, self.geom.ul_y),
-                                                            intsct_raster_geom.inner_extent,
-                                                            x_pixel_size=self.geom.x_pixel_size,
-                                                            y_pixel_size=self.geom.y_pixel_size)
-            px_slices = (slice(min_row, max_row+1), slice(min_col, max_col+1))
-            raster_data = self._load_array(px_slices, slices=slices, inplace=inplace)
-            if apply_mask:
-                mask = raster_data.geom.create_mask(geom, buffer=buffer)
-                # +1 because max row and column need to be included
-                raster_data.apply_mask(mask[min_row:(max_row+1), min_col:(max_col+1)], inplace=True)
-            return raster_data
+        if intsct_raster_geom is not None:
+            if self._data is not None:
+                min_col, min_row, max_col, max_row = rel_extent((self.geom.ul_x, self.geom.ul_y),
+                                                                intsct_raster_geom.inner_extent,
+                                                                x_pixel_size=self.geom.x_pixel_size,
+                                                                y_pixel_size=self.geom.y_pixel_size)
+                px_slices = (slice(min_row, max_row+1), slice(min_col, max_col+1))
+                raster_data = self._load_array(px_slices, slices=slices, inplace=inplace)
+                if apply_mask:
+                    mask = raster_data.create_mask(geom, buffer=buffer)
+                    # +1 because max row and column need to be included
+                    raster_data.apply_mask(mask[min_row:(max_row+1), min_col:(max_col+1)], inplace=True)
+                return raster_data
+            else:
+                raster_data = self.from_raster_geom(intsct_raster_geom, label=self.label,
+                                                    dtype=self.dtype, io=self.io, parent=self)
+                if inplace:
+                    self.geom = raster_data.geom
+                    return self
+                else:
+                    return raster_data
         else:
             return None
 
@@ -414,6 +431,7 @@ class RasterData(metaclass=abc.ABCMeta):
         -------
         RasterData :
             `RasterData` object containing loaded data.
+
         """
 
         io = self.io if io is None else io
@@ -438,7 +456,7 @@ class RasterData(metaclass=abc.ABCMeta):
         data = io.read(**read_kwargs)
         if data is None:
             err_msg = "Could not read data."
-            raise Exception(err_msg)
+            raise IOError(err_msg)
 
         self._check_data(data)
 
@@ -447,7 +465,7 @@ class RasterData(metaclass=abc.ABCMeta):
         if col is not None and row is not None:  # cut geometry according to loaded data
             n_cols = read_kwargs.get("n_cols", 1)
             n_rows = read_kwargs.get("n_rows", 1)
-            max_row, max_col = row + n_rows - 1, col + n_cols - 1 # -1 because of Python indexing
+            max_row, max_col = row + n_rows - 1, col + n_cols - 1  # -1 because of Python indexing
             px_extent = (row, col, max_row, max_col)
             intsct_raster_geom = self.geom.intersection_by_pixel(px_extent, inplace=False)
         else:
@@ -511,6 +529,7 @@ class RasterData(metaclass=abc.ABCMeta):
         -------
         RasterData :
             `RasterData` object containing data referring to the given coordinates.
+
         """
 
         read_kwargs = kwargs.get("read_kwargs", {})
@@ -531,10 +550,9 @@ class RasterData(metaclass=abc.ABCMeta):
         else:
             wrn_msg = "The given coordinates do not intersect with the raster."
             warnings.warn(wrn_msg)
-            return self
+            return None
 
-    @_any_geom2ogr_geom
-    def load_by_geom(self, geom, sref=None, slices=None, band=None, dtype=None, apply_mask=False, decode=True,
+    def load_by_geom(self, geom, slices=None, band=None, dtype=None, apply_mask=False, decode=True,
                      decode_kwargs=None, buffer=0, inplace=False, **kwargs):
         """
         Reads data according to the given geometry/region of interest.
@@ -543,10 +561,6 @@ class RasterData(metaclass=abc.ABCMeta):
         ----------
         geom : geospade.definition.RasterGeometry or ogr.Geometry or shapely.geometry or list or tuple
             Other geometry used for cropping the data.
-        sref : geospade.spatial_ref.SpatialRef or osr.SpatialReference, optional
-            Spatial reference of the coordinates.
-            Has to be given if the spatial reference is different than the spatial reference of the raster data.
-            Note: `sref` is used in the decorator `_any_geom2ogr_geom`.
         slices: tuple, optional
             Additional array slices for all the dimensions coming before the spatial indexing via pixels.
         band : str or int, optional
@@ -588,8 +602,8 @@ class RasterData(metaclass=abc.ABCMeta):
         n_rows = max_row - min_row + 1  # +1 because of python indexing
         n_cols = max_col - min_col + 1  # +1 because of python indexing
 
-        if self.parent_root.geom.intersects(geom, sref=sref):  # geometry intersects with raster boundaries
-            if self._data is None or not self.geom.intersects(geom, sref=sref):  # maybe it does not intersect because part of data is not loaded
+        if self.parent_root.geom.intersects(geom):  # geometry intersects with raster boundaries
+            if self._data is None or not self.geom.intersects(geom):  # maybe it does not intersect because part of data is not loaded
                 read_kwargs.update({"row": min_row})
                 read_kwargs.update({"col": min_col})
                 read_kwargs.update({"n_rows": n_rows})
@@ -611,7 +625,7 @@ class RasterData(metaclass=abc.ABCMeta):
         else:
             wrn_msg = "The given geometry does not intersect with the raster."
             warnings.warn(wrn_msg)
-            return self
+            return None
 
     def load_by_pixel(self, row, col, n_rows=1, n_cols=1, slices=None, band=None, dtype=None, decode=True,
                       decode_kwargs=None, inplace=False, **kwargs):
@@ -701,6 +715,7 @@ class RasterData(metaclass=abc.ABCMeta):
         -------
         RasterData :
             `RasterData` object containing data stored in memory.
+
         """
         dtype = self.dtype if dtype is None else dtype
         if band is None and self.label is not None:
@@ -735,8 +750,9 @@ class RasterData(metaclass=abc.ABCMeta):
         intsct_raster_geom = self.geom.intersection_by_pixel(px_extent, inplace=False)
 
         data = self._convert_data_type(data=data, dtype=dtype, raster_geom=intsct_raster_geom)
-        raster_data = self.from_array(intsct_raster_geom.sref, intsct_raster_geom.geotrans, data=data,
-                                      dtype=dtype, parent=self, io=self.io, label=self.label)
+        raster_data = self.from_array(intsct_raster_geom.sref, intsct_raster_geom.geotrans,
+                                      data=data, dtype=dtype, parent=self, io=self.io,
+                                      label=self.label)
 
         if inplace:
             self.dtype = raster_data.dtype
@@ -766,6 +782,7 @@ class RasterData(metaclass=abc.ABCMeta):
         -------
         numpy.ndarray or xarray.Dataset
             Array-like object containing image pixel values.
+
         """
         pass
 
@@ -794,6 +811,7 @@ class RasterData(metaclass=abc.ABCMeta):
         Notes
         -----
         Only 2 or 3 dimensional data is currently supported.
+
         """
         self._check_data(data)
         data = data if data is not None else self._data
@@ -965,6 +983,7 @@ class RasterLayer(RasterData):
             Defines a band or a data variable name.
         parent : RasterLayer, optional
             Parent `RasterLayer` instance.
+
         """
         super(RasterLayer, self).__init__(n_rows, n_cols, sref, geotrans, data=data, dtype=dtype, io=io,
                                           label=label, parent=parent)
@@ -974,26 +993,6 @@ class RasterLayer(RasterData):
         """ numpy.ndarray or xarray.Dataset : Retrieves 2D array in the requested data format. """
         if self._data is not None:
             return self._convert_data_type()
-
-    @data.setter
-    def data(self, data):
-        """
-        Sets internal data to given 2D data.
-
-        Parameters
-        ----------
-        data : numpy.ndarray or xarray.Dataset
-            2D array-like object containing image pixel values.
-        """
-        self._check_data(data)
-        n_data_rows, n_data_cols = convert_data_type(data, "numpy", band=self.label).shape
-        n_rows, n_cols = self.geom.n_rows, self.geom.n_cols
-        if (n_rows, n_cols) == (n_data_rows, n_data_cols):
-            self._data = data
-        else:
-            wrn_msg = "Data dimension ({}, {}) mismatches raster " \
-                      "layer dimension ({}, {}).".format(n_data_rows, n_data_cols, n_rows, n_cols)
-            warnings.warn(wrn_msg)
 
     @classmethod
     def from_filepath(cls, filepath, read=False, read_kwargs=None, io_class=None, io_kwargs=None, **kwargs):
@@ -1130,6 +1129,7 @@ class RasterLayer(RasterData):
         io_class, file_type = self._io_class_from_filepath(filepath) if io_class is None else io_class
         io = io_class(filepath, mode='w', **io_kwargs)
 
+        # TODO: create dictionary mapping
         if file_type == "GeoTIFF":
             dtype = "numpy"
         elif file_type == "NetCDF":
@@ -1178,6 +1178,7 @@ class RasterLayer(RasterData):
         Returns
         -------
         matplotlib.axes.Axes
+
         """
 
         if 'matplotlib' in sys.modules:
@@ -1334,7 +1335,6 @@ class RasterLayer(RasterData):
         return self.crop(intsct_raster_geom, inplace=False)
 
 
-# TODO: how can one define len + getitem without being an iterator
 class RasterStack(RasterData):
     """ Raster data class for multiple congruent raster layers containing 3D pixel data. """
     def __init__(self, raster_layers, data=None, dtype="numpy", io=None, label=None,
@@ -1386,28 +1386,6 @@ class RasterStack(RasterData):
         """ numpy.ndarray or xarray.Dataset : Retrieves array in the requested data format. """
         if self._data is not None:
             return self._convert_data_type()
-
-    @data.setter
-    def data(self, data):
-        """
-        Sets internal data to given 3D data.
-
-        Parameters
-        ----------
-        data : numpy.ndarray or xarray.Dataset
-            3D array-like object containing image pixel values.
-        """
-        self._check_data(data)
-        n_data_layers, n_data_rows, n_data_cols = convert_data_type(data, "numpy", band=self.label).shape
-
-        n_layers, n_rows, n_cols = len(self.inventory), self.geom.n_rows, self.geom.n_cols
-        if (n_layers, n_rows, n_cols) == (n_data_layers, n_data_rows, n_data_cols):
-            self._data = data
-        else:
-            wrn_msg = "Data dimension ({}, {}, {}) mismatches " \
-                      "Raster stack dimension ({}, {}, {}).".format(n_data_layers, n_data_rows, n_data_cols,
-                                                                    n_layers, n_rows, n_cols)
-            warnings.warn(wrn_msg)
 
     @property
     def labels(self):
@@ -1494,7 +1472,7 @@ class RasterStack(RasterData):
         file_types = set([cls._io_class_from_filepath(filepath)[1] for filepath in filepaths if filepath is not None])
         if len(file_types) > 1:
             err_msg = "Only one file type is allowed."
-            raise Exception(err_msg)
+            raise IOError(err_msg)
 
         n_filepaths = len(filepaths)
         layer_ids = layer_ids if layer_ids is not None and (n_filepaths == len(layer_ids)) else np.arange(n_filepaths)
@@ -1560,6 +1538,7 @@ class RasterStack(RasterData):
         Returns
         -------
         List of xarray.DataSets or numpy.ndarrays
+
         """
         if not isinstance(layer_ids, list):
             layer_ids = [layer_ids]
@@ -1581,7 +1560,7 @@ class RasterStack(RasterData):
 
         return layer_data
 
-    def crop(self, geom=None, sref=None, layer_ids=None, apply_mask=False, buffer=0, inplace=False):
+    def crop(self, geom=None, layer_ids=None, apply_mask=False, buffer=0, inplace=False):
         """
         Crops the loaded data by a geometry and/or layer ID's. In addition, a mask can be applied with a certain buffer.
         `inplace` determines, whether a new object is returned or the cropping happens on the object instance.
@@ -1590,10 +1569,6 @@ class RasterStack(RasterData):
         ----------
         geom : geospade.definition.RasterGeometry or ogr.Geometry or shapely.geometry or list or tuple, optional
             Geometry defining the data extent of interest.
-        sref : geospade.spatial_ref.SpatialRef or osr.SpatialReference, optional
-            Spatial reference of the geometry.
-            Has to be given if the spatial reference is different than the spatial reference of the raster data.
-            Note: `sref` is used in the decorator `_any_geom2ogr_geom`.
         layer_ids : object or list of objects
             Layer ID's representing the labels of the stack dimension (used for selecting a subset).
         apply_mask : bool, optional
@@ -1622,7 +1597,7 @@ class RasterStack(RasterData):
             px_slices = (slice(0, self.geom.n_rows), slice(0, self.geom.n_cols))
             return self._load_array(px_slices, slices=layer_slice, inplace=inplace)
         else:
-            return super().crop(geom, sref=sref, slices=layer_slice, apply_mask=apply_mask, buffer=buffer,
+            return super().crop(geom, slices=layer_slice, apply_mask=apply_mask, buffer=buffer,
                                 inplace=inplace)
 
     def write(self, filepaths, layer_ids=None, stack=True, encode=True, encoder_kwargs=None, **kwargs):
@@ -1679,6 +1654,7 @@ class RasterStack(RasterData):
             Keyword arguments for IO class initialisation.
         write_kwargs : dict, optional
             Keyword arguments for writing function of IO class.
+
         """
 
         write_kwargs = write_kwargs if write_kwargs is not None else {}
@@ -1723,6 +1699,7 @@ class RasterStack(RasterData):
             Keyword arguments for IO class initialisation.
         write_kwargs : dict, optional
             Keyword arguments for writing function of IO class.
+
         """
         write_kwargs = write_kwargs if write_kwargs is not None else {}
         io_kwargs = io_kwargs if io_kwargs is not None else {}
@@ -1782,6 +1759,7 @@ class RasterStack(RasterData):
         Returns
         -------
         matplotlib.axes.Axes, RasterStackSlider
+
         """
 
         # loading Matplotlib module if it is available
@@ -1872,6 +1850,7 @@ class RasterStack(RasterData):
         -------
         numpy.ndarray or xarray.Dataset
             3D array-like object containing image pixel values.
+
         """
 
         data = self._data if data is None else data
@@ -1896,6 +1875,7 @@ class RasterStack(RasterData):
         -------
         bool
             If true, the given data fulfills all requirements for a `RasterStack` object.
+
         """
 
         if data is not None:
@@ -1930,6 +1910,7 @@ class RasterStack(RasterData):
             IO class.
         file_type : str
             Type of file: can be "GeoTiffRasterStack" or "NcRasterStack".
+
         """
 
         tiff_ext = ('.tiff', '.tif', '.geotiff')
@@ -1993,6 +1974,9 @@ class RasterStack(RasterData):
         intsct_raster_geom = self.geom[item[1:]]
 
         return self.crop(geom=intsct_raster_geom, layer_ids=labels, inplace=False)
+
+    def __len__(self):
+        return len(self.inventory)
 
 
 class RasterMosaic(object):
@@ -2210,20 +2194,15 @@ class RasterMosaic(object):
         else:
             return raster_mosaic
 
-    @_any_geom2ogr_geom
-    def load_by_geom(self, geom, sref=None, band=None, dtype=None, apply_mask=False, decode=True,
+    def load_by_geom(self, geom, band=None, dtype=None, apply_mask=False, decode=True,
                      decode_kwargs=None, buffer=0, inplace=False):
         """
         Reads data according to the given geometry/region of interest.
 
         Parameters
         ----------
-        geom : geospade.definition.RasterGeometry or ogr.Geometry or shapely.geometry or list or tuple
+        geom : ogr.Geometry
             Other geometry used for cropping the data.
-        sref : geospade.spatial_ref.SpatialRef or osr.SpatialReference, optional
-            Spatial reference of the coordinates.
-            Has to be given if the spatial reference is different than the spatial reference of the raster data.
-            Note: `sref` is used in the decorator `_any_geom2ogr_geom`.
         band : str or int, optional
             Defines a band or a data variable name. The default behaviour is to take `self.label`.
             If `self.label` is also None, then all available bands are loaded.
@@ -2249,12 +2228,12 @@ class RasterMosaic(object):
         RasterData :
             `RasterData` object containing data referring to the given geometry.
         """
-        grid = self.grid.intersection_by_geom(geom, sref=sref)
+        grid = self.grid.intersection_by_geom(geom)
         spatial_ids = grid.tile_ids
         inventory = self.inventory.loc[spatial_ids]
         raster_stacks = inventory['raster_stack']
 
-        if self.data is not None and self._raster_stack.geom.within(geom, sref=sref):
+        if self.data is not None and self._raster_stack.geom.within(geom):
             loaded_raster_stack = self._raster_stack.load_by_geom(band=band, dtype=dtype, apply_mask=apply_mask,
                                                                   decode=decode, decode_kwargs=decode_kwargs,
                                                                   buffer=buffer, inplace=False)

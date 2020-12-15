@@ -591,6 +591,9 @@ class RasterMosaicTest(unittest.TestCase):
 
 if __name__ == '__main__':
     #unittest.main()
-    tester = RasterMosaicTest()
+    #tester = RasterMosaicTest()
+    #tester.setUp()
+    #tester.test_from_dict()
+    tester = RasterStackTest()
     tester.setUp()
-    tester.test_from_dict()
+    tester.test_plot()
