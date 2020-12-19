@@ -16,10 +16,13 @@
 
 from collections import OrderedDict
 
+import warnings
 import netCDF4
 import numpy as np
 import xarray as xr
 from osgeo import osr
+
+DECODING_ATTR = ["scale_factor", "add_offset"]
 
 
 class NcFile(object):
@@ -82,7 +85,7 @@ class NcFile(object):
                  geotransform=(0, 1, 0, 0, 0, 1), spatialref=None,
                  overwrite=True, nc_format="NETCDF4_CLASSIC", chunksizes=None,
                  time_units="days since 1900-01-01 00:00:00",
-                 var_chunk_cache=None, auto_decode=True, shape=None, data_var_name=None):
+                 var_chunk_cache=None, auto_decode=False, shape=None, data_var_name=None):
 
         self.filename = filename
         self.mode = mode
@@ -128,19 +131,39 @@ class NcFile(object):
         """
 
         if self.mode in ['r', 'r_xarray']:
-            self.src = xr.open_dataset(
-                self.filename, mask_and_scale=self.auto_decode)
-            if 'time' in list(self.src.dims.keys()) and self.src.variables['time'].dtype == 'float':
-                timestamps = netCDF4.num2date(self.src.variables['time'], self.time_units)
-                self.src = self.src.assign_coords({'time': timestamps})
+            self.src = xr.open_dataset(self.filename, mask_and_scale=self.auto_decode)
             self.src_var = self.src
+
+            if self.auto_decode:
+                if data_var_name is None:
+                    data_var_names = list(self.src_var.keys())
+                else:
+                    data_var_names = [data_var_name]
+
+                for var_name in data_var_names:
+                    for attr in DECODING_ATTR:
+                        if attr not in self.src_var[var_name].attrs:
+                            wrn_msg = "Automatic decoding is activated for variable '{}', " \
+                                      "but attribute '{}' is missing!".format(var_name, attr)
+                            warnings.warn(wrn_msg)
+                            break
+
+        if self.mode in ['r', 'a', 'r_xarray']:
+            # get georeference attributes from a grid mapping variable
+            if data_var_name is None:  # find a data set variable which includes a reference to a grid mapping variable
+                for var_name in self.src_var.keys():
+                    if "grid_mapping_name" in self.src_var[var_name].attrs:
+                        data_var_name = var_name
+            if data_var_name is not None and "grid_mapping_name" in self.src_var[data_var_name].attrs.keys():
+                gmn = self.src_var[data_var_name].attrs["grid_mapping_name"]
+                self.geotransform = tuple(map(float, self.src_var[gmn].attrs['GeoTransform'].split(' '))) \
+                    if 'GeoTransform' in self.src_var[gmn].attrs.keys() else None
+                self.spatialref = self.src_var[gmn].attrs['spatial_ref'] \
+                    if 'spatial_ref' in self.src_var[gmn].attrs.keys() else None
 
         if self.mode == 'r_netcdf':
             self.src = netCDF4.Dataset(self.filename, mode='r')
-            self.src_var = self.src.variables
-            if 'time' in list(self.src.dimensions.keys()) and self.src.variables['time'].dtype == 'float':
-                timestamps = netCDF4.num2date(np.array(self.src.variables['time']), self.time_units)
-                self.src.variables['time'] = timestamps
+            self.src.set_auto_maskandscale(self.auto_decode)
             self.src_var = self.src.variables
 
             for var in self.src_var:
@@ -149,22 +172,37 @@ class NcFile(object):
                         self.var_chunk_cache[0], self.var_chunk_cache[1],
                         self.var_chunk_cache[2])
 
+            if self.auto_decode:
+                if data_var_name is None:
+                    data_var_names = list(set(self.src_var.keys()) - set(self.src.dimensions.keys()))
+                else:
+                    data_var_names = [data_var_name]
+
+                for var_name in data_var_names:
+                    for attr in DECODING_ATTR:
+                        if attr not in self.src_var[var_name].ncattrs():
+                            wrn_msg = "Automatic decoding is activated for variable '{}', " \
+                                      "but attribute '{}' is missing!".format(var_name, attr)
+                            warnings.warn(wrn_msg)
+                            break
+
+        if self.mode in ['r_netcdf', 'a']:
+            # get georeference attributes from a grid mapping variable
+            if data_var_name is None: # find a data set variable which includes a reference to a grid mapping variable
+                for var_name in self.src_var.keys():
+                    if "grid_mapping_name" in self.src_var[var_name].ncattrs():
+                        data_var_name = var_name
+
+            if data_var_name is not None and "grid_mapping_name" in self.src_var[data_var_name].ncattrs():
+                gmn = self.src_var[data_var_name].grid_mapping_name
+                self.geotransform = tuple(map(float, self.src_var[gmn].GeoTransform.split(' '))) \
+                    if 'GeoTransform' in self.src_var[gmn].ncattrs() else None
+                self.spatialref = self.src_var[gmn].spatial_ref \
+                    if 'spatial_ref' in self.src_var[gmn].ncattrs() else None
+
         if self.mode == 'a':
             self.src = netCDF4.Dataset(self.filename, mode=self.mode)
             self.src_var = self.src.variables
-
-        if self.mode in ['r', 'a', 'r_netcdf', 'r_xarray']:
-            if data_var_name is None:
-                for var_name in self.src_var.keys():
-                    if "grid_mapping" in self.src_var[var_name].attrs:
-                        data_var_name = var_name
-
-            if data_var_name is not None and "grid_mapping" in self.src_var[data_var_name].attrs:
-                gmn = self.src_var[data_var_name].attrs["grid_mapping"]
-                self.geotransform = tuple(map(float, self.src_var[gmn].attrs['GeoTransform'].split(' '))) \
-                    if 'GeoTransform' in self.src_var[gmn].attrs.keys() else None
-                self.spatialref = self.src_var[gmn].attrs['spatial_ref'] \
-                    if 'spatial_ref' in self.src_var[gmn].attrs.keys() else None
 
         if self.mode == 'w':
             self.src = netCDF4.Dataset(self.filename, mode=self.mode,
@@ -314,6 +352,7 @@ class NcFile(object):
         -------
         data : xarray.Dataset or netCDF4.variables
             Data stored in NetCDF file. Data type depends on read mode.
+
         """
 
         return self.src_var

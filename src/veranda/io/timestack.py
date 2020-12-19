@@ -12,6 +12,7 @@
 # Geodesy and Geoinformation (GEO).
 
 import os
+import warnings
 import tempfile
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -44,6 +45,8 @@ r_gdal_dtype = {gdal.GDT_Byte: "byte",
                 gdal.GDT_Float64: "float64",
                 gdal.GDT_CFloat32: "cfloat32",
                 gdal.GDT_CFloat64: "cfloat64"}
+
+DECODING_ATTR = ["scale_factor", "add_offset"]
 
 
 class GeoTiffRasterTimeStack(object):
@@ -421,15 +424,14 @@ class NcRasterTimeStack(object):
         File name suffix (default: '.nc').
     auto_decode : bool, optional
         If true, when reading ds, "scale_factor" and "add_offset" is applied (default is True).
-        ATTENTION: Also the xarray dataset may applies encoding/scaling what
-                can mess up things
+
     """
 
     def __init__(self, mode='r', file_ts=None, out_path=None,
                  stack_size='%Y%W', geotransform=(0, 1, 0, 0, 0, 1),
                  spatialref=None, compression=2, chunksizes=None,
                  chunks=None, time_units="days since 1900-01-01 00:00:00",
-                 fn_prefix='', fn_suffix='.nc', auto_decode=True):
+                 fn_prefix='', fn_suffix='.nc', auto_decode=False):
 
         self.mode = mode
         self.file_ts = file_ts
@@ -457,6 +459,16 @@ class NcRasterTimeStack(object):
         if self.file_ts is not None:
             self.mfdataset = xr.open_mfdataset(self.file_ts['filenames'].tolist(), chunks=self.chunks,
                                                combine='nested', concat_dim='time', mask_and_scale=self.auto_decode)
+            if self.auto_decode:
+                data_var_names = list(self.mfdataset.keys())
+
+                for var_name in data_var_names:
+                    for attr in DECODING_ATTR:
+                        if attr not in self.mfdataset[var_name].attrs:
+                            wrn_msg = "Automatic decoding is activated for variable '{}', " \
+                                      "but attribute '{}' is missing!".format(var_name, attr)
+                            warnings.warn(wrn_msg)
+                            break
         else:
             raise RuntimeError('Building stack failed')
 
@@ -472,11 +484,7 @@ class NcRasterTimeStack(object):
         if self.mfdataset is None:
             self._build_stack()
 
-        if 'time' in list(self.mfdataset.dims.keys()) and self.mfdataset.variables['time'].dtype == 'float':
-            timestamps = netCDF4.num2date(self.mfdataset['time'], self.time_units)
-            return self.mfdataset.assign_coords({'time': timestamps})
-        else:
-            return self.mfdataset
+        return self.mfdataset
 
     def iter_img(self, var_name):
         """
@@ -500,7 +508,7 @@ class NcRasterTimeStack(object):
         ds = self.read()
 
         for i in range(ds[var_name].shape[0]):
-            time_stamp = netCDF4.num2date(ds['time'][i], self.time_units)
+            time_stamp = netCDF4.num2date(ds['time'][i].values, self.time_units)
             yield time_stamp, ds[var_name][i, :, :]
 
     def write(self, ds):

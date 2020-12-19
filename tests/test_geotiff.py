@@ -21,9 +21,9 @@ from tempfile import mkdtemp
 
 import numpy as np
 
-from veranda.geotiff import read_tiff
-from veranda.geotiff import write_tiff
-from veranda.geotiff import GeoTiffFile
+from veranda.io.geotiff import read_tiff
+from veranda.io.geotiff import write_tiff
+from veranda.io.geotiff import GeoTiffFile
 
 
 class GeotiffTest(unittest.TestCase):
