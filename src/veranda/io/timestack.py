@@ -91,12 +91,13 @@ class GeoTiffRasterTimeStack(object):
     def __init__(self, mode='r', file_ts=None, out_path=None,
                  compression='LZW', blockxsize=512, blockysize=512,
                  geotransform=(0, 1, 0, 0, 0, 1), spatialref=None,
-                 tags=None, gdal_opt=None, file_band=1):
+                 tags=None, gdal_opt=None, file_band=1, auto_decode=False):
 
         self.mode = mode
         self.file_ts = file_ts
         self.file_band = file_band
         self.vrt = None
+        self.auto_decode = auto_decode
 
         self.out_path = out_path
 
@@ -193,13 +194,16 @@ class GeoTiffRasterTimeStack(object):
         -------
         data : numpy.ndarray
             Data set.
+
+        Notes
+        -----
+        Uses scaling factor and offset from first band to decode all data.
+
         """
         if self.vrt is None:
             self._build_stack()
 
-        data = self.vrt.ReadAsArray(col, row, col_size, row_size)
-
-        return data
+        return self._auto_decode(self.vrt.ReadAsArray(col, row, col_size, row_size))
 
     def read_img(self, time_stamp, subset=None):
         """
@@ -227,6 +231,8 @@ class GeoTiffRasterTimeStack(object):
                 data = self.vrt.GetRasterBand(band).ReadAsArray(
                     subset[0], subset[1], subset[2], subset[3])
 
+            data = self._auto_decode(data, band)
+
         return data
 
     def iter_img(self):
@@ -237,7 +243,8 @@ class GeoTiffRasterTimeStack(object):
             self._build_stack()
 
         for band, time_stamp in zip(self.file_ts['band'], self.file_ts.index):
-            yield time_stamp, self.vrt.GetRasterBand(int(band)).ReadAsArray()
+            data = self.vrt.GetRasterBand(int(band)).ReadAsArray()
+            yield time_stamp, self._auto_decode(data, int(band))
 
     def write(self, ds):
         """
@@ -260,7 +267,10 @@ class GeoTiffRasterTimeStack(object):
         for name in ds.variables:
             if name == 'time':
                 continue
-
+            ds_attrs = ds[name].attrs.keys()
+            nodata = [ds[name].attrs["fill_value"]] if "fill_value" in ds_attrs else [-9999]
+            scale_factor = [ds[name].attrs["scale_factor"]] if "scale_factor" in ds_attrs else [1.]
+            add_offset = [ds[name].attrs["add_offset"]] if "add_offset" in ds_attrs else [0.]
             filenames = []
             for i, time_stamp in enumerate(time_stamps):
 
@@ -269,7 +279,7 @@ class GeoTiffRasterTimeStack(object):
                 filenames.append(filename)
 
                 with GeoTiffFile(filename, mode='w', count=1) as src:
-                    src.write(ds[name].isel(time=i).values, band=1)
+                    src.write(ds[name].isel(time=i).values, 1, nodata, scale_factor, add_offset)
 
             band = np.arange(1, len(filenames) + 1)
             var_dict[name] = pd.DataFrame({'filenames': filenames,
@@ -277,8 +287,41 @@ class GeoTiffRasterTimeStack(object):
 
         return var_dict
 
+    def _auto_decode(self, data, band=1):
+        """
+        Applies auto-decoding (if activated) to data related to a specific band.
+
+        Parameters
+        ----------
+        data : np.array
+            Data related to `band`.
+        band : int, optional
+            Band number (defaults to 1).
+
+        Returns
+        -------
+        data : np.array
+            Decoded data if auto-decoding is activated.
+
+        """
+        if self.auto_decode:
+            scale_factor = self.vrt.GetRasterBand(band).GetScale()
+            offset = self.vrt.GetRasterBand(band).GetOffset()
+            nodata = self.vrt.GetRasterBand(band).GetNoDataValue()
+            if (scale_factor != 1.) and (offset != 0.):
+                data = data.astype(float)
+                data[data == nodata] = np.nan
+                data = data * scale_factor + offset
+            else:
+                wrn_msg = "Automatic decoding is activated for band '{}', but attribute 'scale' and 'offset' " \
+                          "are missing!".format(band)
+                warnings.warn(wrn_msg)
+        return data
+
     def close(self):
         """
+        Closes the IO connection to the VRT file.
+
         """
         if self.vrt is not None:
             self.vrt = None
@@ -322,7 +365,7 @@ class GeoTiffRasterTimeStack(object):
         return pd.DataFrame({'filenames': filenames}, index=time_stamps)
 
 
-def create_vrt_file(vrt_filename, file_list, nodata=None, band=1):
+def create_vrt_file(vrt_filename, file_list, band=1):
     """
     Create a .VRT XML file. First file is used as master file.
 
@@ -332,8 +375,6 @@ def create_vrt_file(vrt_filename, file_list, nodata=None, band=1):
         VRT filename.
     file_list : list
         List of files to include in the VRT.
-    nodata : float, optional
-        No data value (default: None).
     band : int, optional
         Band of the input file (default: 1)
     """
@@ -344,6 +385,9 @@ def create_vrt_file(vrt_filename, file_list, nodata=None, band=1):
     xsize = src.RasterXSize
     ysize = src.RasterYSize
     dtype = src.GetRasterBand(band).DataType
+    nodata = src.GetRasterBand(band).GetNoDataValue()
+    scale_factor = src.GetRasterBand(band).GetScale()
+    add_offset = src.GetRasterBand(band).GetOffset()
     src = None
 
     attrib = {"rasterXSize": str(xsize), "rasterYSize": str(ysize)}
@@ -372,8 +416,9 @@ def create_vrt_file(vrt_filename, file_list, nodata=None, band=1):
         file_elem = ET.SubElement(simsrc_elem, "SourceProperties",
                                   attrib=attrib)
 
-        if nodata:
-            ET.SubElement(band_elem, "NodataValue").text = str(nodata)
+        ET.SubElement(band_elem, "NodataValue").text = str(nodata)
+        ET.SubElement(band_elem, "Scale").text = str(scale_factor)
+        ET.SubElement(band_elem, "Offset").text = str(add_offset)
 
     tree = ET.ElementTree(vrt_root)
     tree.write(vrt_filename, encoding="UTF-8")

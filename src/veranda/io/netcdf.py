@@ -357,49 +357,6 @@ class NcFile(object):
 
         return self.src_var
 
-    def decode_xarr_var(self, var):
-        """
-        Decodes the values in the xarray variables.
-
-        BBM: If you find a better way to (safely!) control the decoding, please let me know.
-
-        Parameters
-        ----------
-        var : str
-            name of the variable in the xarray-Dataset
-
-        Returns
-        -------
-        data
-            decoded values of "var",
-            # with applied fill_value
-            # with applied scaling: data * scale_factor + add_offset
-
-        """
-        data = np.float32(self.src_var[var].data)
-
-        # apply filling value
-        try:
-            fv = self.src_var[var].fill_value
-            data[data == fv] = np.nan
-        except:
-            pass
-
-        # get offset
-        try:
-            os = self.src_var[var].add_offset
-        except:
-            os = 0.0
-
-        # apply scaling
-        try:
-            sf = self.src_var[var].scale_factor
-            data = data * sf + os
-        except:
-            pass
-
-        return data
-
     def set_global_atts(self, atts):
         """
         Set global attributes.

@@ -79,6 +79,44 @@ class GeoTiffRasterTimeStackTest(unittest.TestCase):
         np.testing.assert_equal(
             img2, ds.sel(time='2000-02-08')['data'].values)
 
+    def test_read_decoded_image_stack(self):
+        """
+        Tests reading and decoding of an image stack.
+
+        """
+        num_files = 25
+        xsize = 60
+        ysize = 50
+
+        dims = ['time', 'x', 'y']
+        coords = {'time': pd.date_range('2000-01-01', periods=num_files)}
+        data = np.ones((num_files, xsize, ysize))
+        attr1 = {'unit': 'dB', 'scale_factor': 2, 'add_offset': 3, 'fill_value': -9999}
+        attr2 = {'unit': 'dB', 'fill_value': -9999}
+        ds = xr.Dataset({'data1': (dims, data, attr1), 'data2': (dims, data, attr2)}, coords=coords)
+
+        with GeoTiffRasterTimeStack(mode='w', out_path=self.path) as stack:
+            file_ts = stack.write(ds)
+
+        with GeoTiffRasterTimeStack(file_ts=file_ts['data2'], auto_decode=True) as stack:
+            ts1 = stack.read_ts(0, 0, 10, 10)
+            ts2 = stack.read_ts(12, 10, 5, 5)
+            np.testing.assert_equal(ts1, data[:, 0:10, 0:10])
+            np.testing.assert_equal(ts2, data[:, 10:15, 12:17])
+
+        with GeoTiffRasterTimeStack(file_ts=file_ts['data1'], auto_decode=False) as stack:
+            ts1 = stack.read_ts(0, 0, 10, 10)
+            ts2 = stack.read_ts(12, 10, 5, 5)
+            np.testing.assert_equal(ts1, data[:, 0:10, 0:10])
+            np.testing.assert_equal(ts2, data[:, 10:15, 12:17])
+
+        data = data*2. + 3.
+        with GeoTiffRasterTimeStack(file_ts=file_ts['data1'], auto_decode=True) as stack:
+            ts1 = stack.read_ts(0, 0, 10, 10)
+            ts2 = stack.read_ts(12, 10, 5, 5)
+            np.testing.assert_equal(ts1, data[:, 0:10, 0:10])
+            np.testing.assert_equal(ts2, data[:, 10:15, 12:17])
+
     def test_export_nc(self):
         """
         Test exporting image stack to NetCDF.
