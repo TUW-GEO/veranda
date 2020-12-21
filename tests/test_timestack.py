@@ -24,8 +24,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from veranda.timestack import GeoTiffRasterTimeStack
-from veranda.timestack import NcRasterTimeStack
+from veranda.io.timestack import GeoTiffRasterTimeStack
+from veranda.io.timestack import NcRasterTimeStack
 
 
 class GeoTiffRasterTimeStackTest(unittest.TestCase):
@@ -78,6 +78,44 @@ class GeoTiffRasterTimeStackTest(unittest.TestCase):
         self.assertEqual(img2.shape, (xsize, ysize))
         np.testing.assert_equal(
             img2, ds.sel(time='2000-02-08')['data'].values)
+
+    def test_read_decoded_image_stack(self):
+        """
+        Tests reading and decoding of an image stack.
+
+        """
+        num_files = 25
+        xsize = 60
+        ysize = 50
+
+        dims = ['time', 'x', 'y']
+        coords = {'time': pd.date_range('2000-01-01', periods=num_files)}
+        data = np.ones((num_files, xsize, ysize))
+        attr1 = {'unit': 'dB', 'scale_factor': 2, 'add_offset': 3, 'fill_value': -9999}
+        attr2 = {'unit': 'dB', 'fill_value': -9999}
+        ds = xr.Dataset({'data1': (dims, data, attr1), 'data2': (dims, data, attr2)}, coords=coords)
+
+        with GeoTiffRasterTimeStack(mode='w', out_path=self.path) as stack:
+            file_ts = stack.write(ds)
+
+        with GeoTiffRasterTimeStack(file_ts=file_ts['data2'], auto_decode=True) as stack:
+            ts1 = stack.read_ts(0, 0, 10, 10)
+            ts2 = stack.read_ts(12, 10, 5, 5)
+            np.testing.assert_equal(ts1, data[:, 0:10, 0:10])
+            np.testing.assert_equal(ts2, data[:, 10:15, 12:17])
+
+        with GeoTiffRasterTimeStack(file_ts=file_ts['data1'], auto_decode=False) as stack:
+            ts1 = stack.read_ts(0, 0, 10, 10)
+            ts2 = stack.read_ts(12, 10, 5, 5)
+            np.testing.assert_equal(ts1, data[:, 0:10, 0:10])
+            np.testing.assert_equal(ts2, data[:, 10:15, 12:17])
+
+        data = data*2. + 3.
+        with GeoTiffRasterTimeStack(file_ts=file_ts['data1'], auto_decode=True) as stack:
+            ts1 = stack.read_ts(0, 0, 10, 10)
+            ts2 = stack.read_ts(12, 10, 5, 5)
+            np.testing.assert_equal(ts1, data[:, 0:10, 0:10])
+            np.testing.assert_equal(ts2, data[:, 10:15, 12:17])
 
     def test_export_nc(self):
         """
@@ -156,6 +194,42 @@ class NcRasterTimeStackTest(unittest.TestCase):
             np.testing.assert_equal(
                 ts['data'][38, :, :].values,
                 ds.sel(time='2000-02-08')['data'].values)
+
+    def test_read_decoded_image_stack(self):
+        """
+        Test decoding when reading an image stack.
+        """
+        num_files = 50
+        xsize = 60
+        ysize = 50
+
+        dims = ['time', 'x', 'y']
+        coords = {'time': pd.date_range('2000-01-01', periods=num_files)}
+        attr1 = {'unit': 'dB', 'scale_factor': 2, 'add_offset': 3, 'fill_value': -9999}
+        attr2 = {'unit': 'dB', 'fill_value': -9999}
+        data = np.ones((num_files, xsize, ysize))
+        ds = xr.Dataset({'data1': (dims, data,  attr1), 'data2': (dims, data, attr2)}, coords=coords)
+
+        with NcRasterTimeStack(mode='w', out_path=self.path) as stack:
+            file_ts = stack.write(ds)
+
+        with NcRasterTimeStack(file_ts=file_ts, auto_decode=False) as stack:
+            ts = stack.read()
+
+            np.testing.assert_equal(ts['data1'][:, 0:10, 0:10].values,
+                                    data[:, :10, :10])
+            np.testing.assert_equal(ts['data2'][:, 0:10, 0:10].values,
+                                    data[:, :10, :10])
+
+        with NcRasterTimeStack(file_ts=file_ts, auto_decode=True) as stack:
+            ts = stack.read()
+
+            np.testing.assert_equal(ts['data1'][:, 0:10, 0:10].values,
+                                    data[:, :10, :10]*2 + 3)
+            np.testing.assert_equal(ts['data2'][:, 0:10, 0:10].values,
+                                    data[:, :10, :10])
+
+
 
     def test_write_read_image_stack_single_nc(self):
         """

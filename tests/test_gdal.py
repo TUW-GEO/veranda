@@ -81,6 +81,4 @@ class GdalTest(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    gt = GdalTest()
-    gt.setUp()
-    gt.test_biproj_point()
+    unittest.main()

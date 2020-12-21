@@ -21,9 +21,9 @@ from tempfile import mkdtemp
 
 import numpy as np
 
-from veranda.geotiff import read_tiff
-from veranda.geotiff import write_tiff
-from veranda.geotiff import GeoTiffFile
+from veranda.io.geotiff import read_tiff
+from veranda.io.geotiff import write_tiff
+from veranda.io.geotiff import GeoTiffFile
 
 
 class GeotiffTest(unittest.TestCase):
@@ -117,6 +117,35 @@ class GeoTiffFileTest(unittest.TestCase):
                 ds, tags = src.read(band + 1)
                 np.testing.assert_array_equal(
                     ds, data[band, :, :])
+
+    def test_decoding_multi_band(self):
+        """
+        Test decoding of multi band data.
+
+        """
+        data = np.ones((5, 100, 100), dtype=np.float32)
+
+        with GeoTiffFile(self.filename, mode='w') as src:
+            src.write(data, scale_factor=[1, 2, 1, 1, 3], add_offset=[0, 3, 0, 0, 0])
+
+        with GeoTiffFile(self.filename, auto_decode=False) as src:
+            ds, tags = src.read(1)
+            np.testing.assert_array_equal(ds, data[0, :, :])
+            ds, tags = src.read(2)
+            np.testing.assert_array_equal(ds, data[1, :, :])
+            ds, tags = src.read(5)
+            np.testing.assert_array_equal(ds, data[4, :, :])
+
+        data[1, :, :] = data[1, :, :] * 2 + 3
+        data[4, :, :] = data[4, :, :] * 3
+
+        with GeoTiffFile(self.filename, auto_decode=True) as src:
+            ds, tags = src.read(1)
+            np.testing.assert_array_equal(ds, data[0, :, :])
+            ds, tags = src.read(2)
+            np.testing.assert_array_equal(ds, data[1, :, :])
+            ds, tags = src.read(5)
+            np.testing.assert_array_equal(ds, data[4, :, :])
 
     def test_read_write_specific_band(self):
         """
