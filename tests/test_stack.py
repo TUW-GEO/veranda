@@ -157,6 +157,34 @@ class NcRasterStackTest(unittest.TestCase):
             np.testing.assert_equal(
                 ts['data'][38, :, :],
                 ds.sel(time='2000-02-08')['data'].values)
+    
+    def test_write_read_image_stack_small_timestamp(self):
+        """
+        Test writing and reading an image stack.
+        """
+        num_files = 100
+        xsize = 60
+        ysize = 50
+        #TODO: global attr?
+        dims = ['time', 'y', 'x']
+        coords = {'time': pd.date_range('1999-12-31-23-30-00',
+                                        periods=num_files,
+                                        freq='18min').astype('datetime64[ns]')}
+        data = np.random.randn(num_files, ysize, xsize)
+        ds = xr.Dataset({'data': (dims, data)}, coords=coords)
+        with NcRasterStack(mode='w') as stack:
+            inventory = stack.write_netcdfs(ds, self.path, stack_size="12H")
+        filepaths = inventory['filepath']
+        
+        for i in range(len(inventory)):
+
+            with NcRasterStack(inventory=inventory.iloc[[i],:]) as stack:
+                ts = stack.read(band='data')
+                np.testing.assert_array_less(np.full(len(ts['time']),
+                                             inventory.index[i]),ts['time'])
+                np.testing.assert_equal(ts['data'][:,:,:].values,
+                                        data[np.isin(coords['time'].values,
+                                             ts['time'].astype('datetime64[ns]').values)])
 
     def test_write_read_image_stack_single_nc(self):
         """

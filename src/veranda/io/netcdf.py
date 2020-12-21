@@ -343,6 +343,11 @@ class NcFile(object):
                 err_msg = "Data is only allowed to have 2 or 3 dimensions, but it has {} dimensions.".format(n_dims)
                 raise ValueError(err_msg)
 
+        #add attributes from ds to src
+        for key, value in ds.attrs.items():
+            self.src.setncattr(key,value)
+
+
     def read(self, row=None, col=None, n_rows=1, n_cols=1, band=None, nodataval=None, decoder=None,
              decoder_kwargs=None):
         """
