@@ -81,13 +81,6 @@ If you want to contribute please follow these steps:
 ## Citation
 
 If you use this software in a publication then please cite it using the Zenodo DOI.
-Be aware that this badge links to the latest package version.
-
-Please select your specific version at  (link to first release) to get the DOI of that version.
-You should normally always use the DOI for the specific version of your record in citations.
-This is to ensure that other researchers can access the exact research artefact you used for reproducibility.
-
-You can find additional information regarding DOI versioning at <http://help.zenodo.org/#versioning>.
 
 ## Note
 
