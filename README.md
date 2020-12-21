@@ -19,7 +19,7 @@ The core-interface between higher-level data cubes (cf. *yeoda*) and the data st
 implemented in *veranda*, allowing efficient and unambiguous writing and reading of EO data.
 
 ## Installation
-The package can be either installed via pip or if you solely want to work with *veranda* or contribute, we recommend to 
+The package can be either installed via pip or if you want to work solely with *veranda* or contribute, we recommend to 
 install it as a conda environment. If you work already with your own environment, please have look at ``requirements.txt``.
 
 ### pip
@@ -27,6 +27,9 @@ To install *veranda* via pip in your own environment, use:
 ```
 pip install veranda
 ```
+**ATTENTION**: GDAL needs more OS support and has more dependencies then other packages and can therefore not be installed solely via pip.
+Please have a look at https://pypi.org/project/GDAL/ what requirements are needed. Thus, for a fresh setup, an existing environment 
+with a Python and GDAL installation are expected.
 
 ### conda
 The packages also comes along with one conda environment ``conda_environment.yml``. 
