@@ -595,6 +595,9 @@ class NcRasterStack:
         gm_name = NcFile.get_gm_name(self.mfdataset)
         if gm_name is not None:
             data[gm_name] = self.mfdataset[gm_name]
+        
+        #add attributes
+        data.attrs=self.mfdataset.attrs
 
         return self._fill_nan(data)
 
