@@ -123,7 +123,7 @@ class NcFile(object):
         """
 
         if self.mode in ['r', 'r_xarray']:
-            self.src = xr.open_dataset(self.filepath, mask_and_scale=auto_scale)
+            self.src = xr.open_dataset(self.filepath, mask_and_scale=auto_scale, use_cftime=False)
             self.src_var = self.src
 
         if self.mode == 'r_netcdf':
@@ -300,7 +300,7 @@ class NcFile(object):
         if 'time' in coord_names:
             if ds['time'].dtype == "<M8[ns]":  # "<M8[ns]" is numpy datetime in ns # ToDo: solve this in a better way
                 timestamps = netCDF4.date2num(ds['time'].to_index().to_pydatetime(),
-                                         self.time_units, 'standard')
+                                              self.time_units, 'standard')
             else:
                 timestamps = ds['time']
             self.src_var['time'][append_start:] = timestamps
@@ -427,7 +427,7 @@ class NcFile(object):
 
         # convert float timestamps to datetime timestamps
         if 'time' in list(src_var.dims.keys()) and src_var['time'].dtype == 'float':
-            timestamps = netCDF4.num2date(src_var.variables['time'], self.time_units)
+            timestamps = netCDF4.num2date(src_var.variables['time'], self.time_units, only_use_cftime_datetimes=False)
             src_var = src_var.assign_coords({'time': timestamps})
 
         data = None

@@ -1,3 +1,5 @@
+import numpy as np
+import xarray as xr
 
 
 # TODO: can we represent a rotated array with xarray?

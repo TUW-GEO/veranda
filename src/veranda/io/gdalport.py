@@ -25,7 +25,7 @@ import numpy as np
 from osgeo import gdal
 from osgeo import ogr
 from osgeo import osr
-from gdalconst import GA_Update
+from osgeo.gdalconst import GA_Update
 
 gdal_datatype = {"uint8": gdal.GDT_Byte,
                  "int16": gdal.GDT_Int16,

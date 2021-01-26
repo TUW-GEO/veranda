@@ -1,0 +1,11 @@
+name: veranda_experimental
+channels:
+    - conda-forge
+dependencies:
+    - python=3.6
+    - gdal
+    - numpy
+    - pyproj
+    - dask
+    - xarray
+    - netcdf4

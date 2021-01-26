@@ -17,7 +17,7 @@ Test read/write of gdalport.
 
 import os
 import unittest
-import ogr, osr
+from osgeo import ogr, osr
 
 
 class GdalTest(unittest.TestCase):
