@@ -65,6 +65,48 @@ class NcTest(unittest.TestCase):
             np.testing.assert_array_equal(ds['inc'][:], self.ds['inc'][:])
             np.testing.assert_array_equal(ds['azi'][:], self.ds['azi'][:])
 
+    def test_auto_decoding(self):
+        """
+        Test automatic decoding of data variables.
+        """
+        data = np.ones((100, 100, 100), dtype=np.float32)
+        dims = ['time', 'x', 'y']
+        coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
+        attr1 = {'unit': 'dB', 'scale_factor': 2, 'add_offset': 3, 'fill_value': -9999}
+        attr2 = {'unit': 'degree', 'fill_value': -9999, 'scale_factor': 2, 'add_offset': 0}
+        attr3 = {'unit': 'degree', 'fill_value': -9999}
+
+        self.ds = xr.Dataset({'sig': (dims, data, attr1),
+                              'inc': (dims, data, attr2),
+                              'azi': (dims, data, attr3)}, coords=coords)
+
+        with NcFile(self.filename, mode='w') as nc:
+            nc.write(self.ds)
+
+        with NcFile(self.filename, mode='r_xarray', auto_decode=False) as nc:
+            ds = nc.read()
+            np.testing.assert_array_equal(ds['sig'][:], self.ds['sig'][:])
+            np.testing.assert_array_equal(ds['inc'][:], self.ds['inc'][:])
+            np.testing.assert_array_equal(ds['azi'][:], self.ds['azi'][:])
+
+        with NcFile(self.filename, mode='r_xarray', auto_decode=True) as nc:
+            ds = nc.read()
+            np.testing.assert_array_equal(ds['sig'][:], self.ds['sig'][:]*2 + 3)
+            np.testing.assert_array_equal(ds['inc'][:], self.ds['inc'][:]*2)
+            np.testing.assert_array_equal(ds['azi'][:], self.ds['azi'][:])
+
+        with NcFile(self.filename, mode='r_netcdf', auto_decode=False) as nc:
+            ds = nc.read()
+            np.testing.assert_array_equal(ds['sig'][:], self.ds['sig'][:])
+            np.testing.assert_array_equal(ds['inc'][:], self.ds['inc'][:])
+            np.testing.assert_array_equal(ds['azi'][:], self.ds['azi'][:])
+
+        with NcFile(self.filename, mode='r_netcdf', auto_decode=True) as nc:
+            ds = nc.read()
+            np.testing.assert_array_equal(ds['sig'][:], self.ds['sig'][:] * 2 + 3)
+            np.testing.assert_array_equal(ds['inc'][:], self.ds['inc'][:] * 2)
+            np.testing.assert_array_equal(ds['azi'][:], self.ds['azi'][:])
+
     def test_append(self):
         """
         Test appending to existing NetCDF file.

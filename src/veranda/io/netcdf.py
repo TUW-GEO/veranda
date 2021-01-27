@@ -16,12 +16,16 @@
 
 from collections import OrderedDict
 
+import warnings
 import netCDF4
 import numpy as np
 import xarray as xr
 from osgeo import osr
 
 # todo: enhance reading netcdf as NetCDF4 datasets
+DECODING_ATTR = ["scale_factor", "add_offset"]
+
+
 class NcFile(object):
 
     """
@@ -72,18 +76,16 @@ class NcFile(object):
     var_chunk_cache : tuple, optional
         Change variable chunk cache settings. A tuple containing
         size, nelems, preemption (default None, using default cache size)
-    auto_scale : bool, optional
-        should the data in variables automatically be encoded?
-        that means: when reading ds, "scale_factor" and "add_offset" is applied.
+    auto_decode : bool, optional
+        If true, when reading ds, "scale_factor" and "add_offset" is applied (default is True).
         ATTENTION: Also the xarray dataset may applies encoding/scaling what
                 can mess up things
-
     """
 
     def __init__(self, filepath, mode='r', geotrans=(0, 1, 0, 0, 0, 1), sref=None, overwrite=True,
                  complevel=2, zlib=True, nc_format="NETCDF4_CLASSIC", chunksizes=None,
                  time_units="days since 1900-01-01 00:00:00",
-                 var_chunk_cache=None, auto_scale=True, shape=None):
+                 var_chunk_cache=None, auto_decode=False, shape=None):
 
         self.src = None
         self.src_var = {}
@@ -101,7 +103,7 @@ class NcFile(object):
         self.chunksizes = chunksizes
         self.time_units = time_units
         self.var_chunk_cache = var_chunk_cache
-        self.auto_scale = auto_scale
+        self.auto_decode = auto_decode
 
         if self.mode in ['r', 'r_xarray', 'r_netcdf']:
             self._open()
@@ -123,11 +125,12 @@ class NcFile(object):
         """
 
         if self.mode in ['r', 'r_xarray']:
-            self.src = xr.open_dataset(self.filepath, mask_and_scale=auto_scale, use_cftime=False)
+            self.src = xr.open_dataset(self.filepath, mask_and_scale=self.auto_decode, use_cftime=False)
             self.src_var = self.src
 
         if self.mode == 'r_netcdf':
             self.src = netCDF4.Dataset(self.filepath, mode='r')
+            self.src.set_auto_maskandscale(self.auto_decode)
             self.src_var = self.src.variables
 
             for var in self.src_var:
@@ -259,7 +262,7 @@ class NcFile(object):
             else:
                 self.shape = (self.src.dimensions['y'].size, self.src.dimensions['x'].size)
 
-    def write(self, ds, band=None, nodataval=None, encoder=None, encoder_kwargs=None, auto_scale=False):
+    def write(self, ds, band=None, nodataval=None, encoder=None, encoder_kwargs=None):
         """
         Write data into netCDF4 file.
 
@@ -322,7 +325,7 @@ class NcFile(object):
                     band, ds[band].dtype.name, ds[band].dims,
                     chunksizes=self.chunksizes, zlib=self.zlib,
                     complevel=self.complevel, fill_value=fill_value)
-                self.src_var[band].set_auto_scale(auto_scale)
+                self.src_var[band].set_auto_scale(self.auto_decode)
 
                 if self.var_chunk_cache is not None:
                     self.src_var[band].set_var_chunk_cache(
@@ -379,6 +382,7 @@ class NcFile(object):
         -------
         data : xarray.Dataset or netCDF4.variables
             Data stored in NetCDF file. Data type depends on read mode.
+
         """
         decoder_kwargs = {} if decoder_kwargs is None else decoder_kwargs
 

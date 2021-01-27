@@ -19,6 +19,7 @@ Read and write Geotiff files.
 import os
 import math
 
+import warnings
 import numpy as np
 from osgeo import gdal
 from osgeo import gdal_array
@@ -270,7 +271,7 @@ class GeoTiffFile(object):
     def __init__(self, filepath, mode='r', compression='LZW',
                  blockxsize=512, blockysize=512, geotrans=(0, 1, 0, 0, 0, 1),
                  n_bands=None, sref=None, tags=None,
-                 overwrite=True, gdal_opt=None):
+                 overwrite=True, gdal_opt=None, auto_decode=False):
 
         # mandatory variables for a RasterIOBase object
         self.src = None
@@ -281,6 +282,7 @@ class GeoTiffFile(object):
         self.geotrans = geotrans
         self.metadata = tags['metadata'] if tags is not None and 'metadata' in tags.keys() else None
         self.overwrite = overwrite
+        self.auto_decode = auto_decode
 
         self.driver = gdal.GetDriverByName('GTiff')
         self.tags = tags
@@ -443,10 +445,22 @@ class GeoTiffFile(object):
                     data = gdal_band.ReadAsArray()
                 else:
                     data = gdal_band.ReadAsArray(col, row, n_cols, n_rows)
-                if decoder is not None:
-                    data_list.append(decoder(data, nodataval=nodataval[i], **decoder_kwargs))
+
+                tags = self.read_tags(band)
+
+                if self.auto_decode:
+                    if (tags['scale_factor'] != 1.) or (tags['add_offset'] != 0.):
+                        data = data.astype(float)
+                        data[data == tags['nodata']] = np.nan
+                        data = data * tags['scale_factor'] + tags['add_offset']
+                    else:
+                        wrn_msg = "Automatic decoding is activated for band '{}', " \
+                                  "but attribute 'scale' and 'offset' are missing!".format(band)
+                        warnings.warn(wrn_msg)
                 else:
-                    data_list.append(data)
+                    if decoder is not None:
+                        data = decoder(data, nodataval=nodataval[i], **decoder_kwargs)
+                data_list.append(data)
 
             data = np.vstack(data_list)
 
@@ -474,6 +488,8 @@ class GeoTiffFile(object):
         gcps = self.src.GetGCPs()
         blockxsize, blockysize = self.src.GetRasterBand(band).GetBlockSize()
         nodata = self.src.GetRasterBand(band).GetNoDataValue()
+        scale_factor = self.src.GetRasterBand(band).GetScale()
+        offset = self.src.GetRasterBand(band).GetOffset()
         dtype = gdal_array.GDALTypeCodeToNumericTypeCode(
             self.src.GetRasterBand(band).DataType)
 
@@ -483,13 +499,15 @@ class GeoTiffFile(object):
                 'spatialreference': spatialreference,
                 'gcps': gcps,
                 'nodata': nodata,
+                'scale_factor': scale_factor,
+                'add_offset': offset,
                 'datatype': dtype,
                 'blockxsize': blockxsize,
                 'blockysize': blockysize}
 
         return tags
 
-    def write(self, data, band=None, encoder=None, nodataval=None, encoder_kwargs=None, ct=None):
+    def write(self, data, band=None, encoder=None, nodataval=None, encoder_kwargs=-9999, scale_factor=1., add_offset=0, ct=None):
         """
         Write data into raster file.
 
@@ -510,9 +528,16 @@ class GeoTiffFile(object):
         nodataval : tuple or list, optional
             List of no data values for each band.
             Default: -9999 for each band.
+        scale_factor : number or tuple or list, optional
+            Number or list of no data values for each band.
+            Default: 1. for each band.
+        add_offset : number or tuple or list, optional
+            Number or list of no data values for each band.
+            Default: 0. for each band.
         ct : tuple or list, optional
             List of color tables for each band.
             Default: No color tables set.
+
         """
 
         if not self.overwrite and os.path.exists(self.filepath):
@@ -530,10 +555,12 @@ class GeoTiffFile(object):
             err_msg = "Only 2d or 3d arrays are supported"
             raise ValueError(err_msg)
 
-        if nodataval is not None and not isinstance(nodataval, list):
-            nodataval = [nodataval] * n_data_layers
-        elif nodataval is None:
-            nodataval = [-9999] * n_data_layers
+        if not isinstance(nodata, (tuple, list)):
+            nodata = [-9999] * n_data_layers
+        if not isinstance(scale_factor, (tuple, list)):
+            scale_factor = [scale_factor] * n_data_layers
+        if not isinstance(add_offset, (tuple, list)):
+            add_offset = [add_offset] * n_data_layers
 
         if not isinstance(ct, list):
             ct = [ct] * n_data_layers
@@ -572,6 +599,8 @@ class GeoTiffFile(object):
                 else:
                     self.src.GetRasterBand(band).WriteArray(data[b, :, :])
                 self.src.GetRasterBand(band).SetNoDataValue(nodataval[b])
+                self.src.GetRasterBand(bandn).SetScale(scale_factor[b])
+                self.src.GetRasterBand(bandn).SetOffset(add_offset[b])
                 if ct[b] is not None:
                     self.src.GetRasterBand(band).SetRasterColorTable(ct[b])
                 else:
@@ -592,6 +621,8 @@ class GeoTiffFile(object):
                 else:
                     self.src.GetRasterBand(band).WriteArray(data)
 
+                self.src.GetRasterBand(band).SetScale(scale_factor[band - 1])
+                self.src.GetRasterBand(band).SetOffset(add_offset[band - 1])
                 if nodataval is not None:
                     self.src.GetRasterBand(band).SetNoDataValue(nodataval[0])
                 if ct[0] is not None:
