@@ -125,26 +125,26 @@ class GeoTiffFileTest(unittest.TestCase):
         """
         data = np.ones((5, 100, 100), dtype=np.float32)
 
-        with GeoTiffFile(self.filename, mode='w') as src:
+        with GeoTiffFile(self.filepath, mode='w') as src:
             src.write(data, scale_factor=[1, 2, 1, 1, 3], add_offset=[0, 3, 0, 0, 0])
 
-        with GeoTiffFile(self.filename, auto_decode=False) as src:
-            ds, tags = src.read(1)
+        with GeoTiffFile(self.filepath, auto_decode=False) as src:
+            ds = src.read(band=1)
             np.testing.assert_array_equal(ds, data[0, :, :])
-            ds, tags = src.read(2)
+            ds = src.read(band=2)
             np.testing.assert_array_equal(ds, data[1, :, :])
-            ds, tags = src.read(5)
+            ds = src.read(band=5)
             np.testing.assert_array_equal(ds, data[4, :, :])
 
         data[1, :, :] = data[1, :, :] * 2 + 3
         data[4, :, :] = data[4, :, :] * 3
 
-        with GeoTiffFile(self.filename, auto_decode=True) as src:
-            ds, tags = src.read(1)
+        with GeoTiffFile(self.filepath, auto_decode=True) as src:
+            ds = src.read(band=1)
             np.testing.assert_array_equal(ds, data[0, :, :])
-            ds, tags = src.read(2)
+            ds = src.read(band=2)
             np.testing.assert_array_equal(ds, data[1, :, :])
-            ds, tags = src.read(5)
+            ds = src.read(band=5)
             np.testing.assert_array_equal(ds, data[4, :, :])
 
     def test_read_write_specific_band(self):

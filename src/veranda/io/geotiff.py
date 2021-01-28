@@ -555,8 +555,8 @@ class GeoTiffFile(object):
             err_msg = "Only 2d or 3d arrays are supported"
             raise ValueError(err_msg)
 
-        if not isinstance(nodata, (tuple, list)):
-            nodata = [-9999] * n_data_layers
+        if not isinstance(nodataval, (tuple, list)):
+            nodataval = [-9999] * n_data_layers
         if not isinstance(scale_factor, (tuple, list)):
             scale_factor = [scale_factor] * n_data_layers
         if not isinstance(add_offset, (tuple, list)):
@@ -599,8 +599,8 @@ class GeoTiffFile(object):
                 else:
                     self.src.GetRasterBand(band).WriteArray(data[b, :, :])
                 self.src.GetRasterBand(band).SetNoDataValue(nodataval[b])
-                self.src.GetRasterBand(bandn).SetScale(scale_factor[b])
-                self.src.GetRasterBand(bandn).SetOffset(add_offset[b])
+                self.src.GetRasterBand(band).SetScale(scale_factor[b])
+                self.src.GetRasterBand(band).SetOffset(add_offset[b])
                 if ct[b] is not None:
                     self.src.GetRasterBand(band).SetRasterColorTable(ct[b])
                 else:
@@ -621,8 +621,8 @@ class GeoTiffFile(object):
                 else:
                     self.src.GetRasterBand(band).WriteArray(data)
 
-                self.src.GetRasterBand(band).SetScale(scale_factor[band - 1])
-                self.src.GetRasterBand(band).SetOffset(add_offset[band - 1])
+                self.src.GetRasterBand(band).SetScale(scale_factor[0])
+                self.src.GetRasterBand(band).SetOffset(add_offset[0])
                 if nodataval is not None:
                     self.src.GetRasterBand(band).SetNoDataValue(nodataval[0])
                 if ct[0] is not None:

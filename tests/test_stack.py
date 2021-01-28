@@ -96,25 +96,25 @@ class GeoTiffRasterStackTest(unittest.TestCase):
         attr2 = {'unit': 'dB', 'fill_value': -9999}
         ds = xr.Dataset({'data1': (dims, data, attr1), 'data2': (dims, data, attr2)}, coords=coords)
 
-        with GeoTiffRasterTimeStack(mode='w', out_path=self.path) as stack:
-            file_ts = stack.write(ds)
+        with GeoTiffRasterStack(mode='w') as stack:
+            ds_dict = stack.write_from_xr(ds, self.path)
 
-        with GeoTiffRasterTimeStack(file_ts=file_ts['data2'], auto_decode=True) as stack:
-            ts1 = stack.read_ts(0, 0, 10, 10)
-            ts2 = stack.read_ts(12, 10, 5, 5)
+        with GeoTiffRasterStack(inventory=ds_dict['data2'], auto_decode=True) as stack:
+            ts1 = stack.read(0, 0, 10, 10)
+            ts2 = stack.read(10, 12, 5, 5)
             np.testing.assert_equal(ts1, data[:, 0:10, 0:10])
             np.testing.assert_equal(ts2, data[:, 10:15, 12:17])
 
-        with GeoTiffRasterTimeStack(file_ts=file_ts['data1'], auto_decode=False) as stack:
-            ts1 = stack.read_ts(0, 0, 10, 10)
-            ts2 = stack.read_ts(12, 10, 5, 5)
+        with GeoTiffRasterStack(inventory=ds_dict['data1'], auto_decode=False) as stack:
+            ts1 = stack.read(0, 0, 10, 10)
+            ts2 = stack.read(10, 12, 5, 5)
             np.testing.assert_equal(ts1, data[:, 0:10, 0:10])
             np.testing.assert_equal(ts2, data[:, 10:15, 12:17])
 
         data = data*2. + 3.
-        with GeoTiffRasterTimeStack(file_ts=file_ts['data1'], auto_decode=True) as stack:
-            ts1 = stack.read_ts(0, 0, 10, 10)
-            ts2 = stack.read_ts(12, 10, 5, 5)
+        with GeoTiffRasterStack(inventory=ds_dict['data1'], auto_decode=True) as stack:
+            ts1 = stack.read(0, 0, 10, 10)
+            ts2 = stack.read(10, 12, 5, 5)
             np.testing.assert_equal(ts1, data[:, 0:10, 0:10])
             np.testing.assert_equal(ts2, data[:, 10:15, 12:17])
 
@@ -218,10 +218,11 @@ class NcRasterStackTest(unittest.TestCase):
             with NcRasterStack(inventory=inventory.iloc[[i],:]) as stack:
                 ts = stack.read(band='data')
                 np.testing.assert_array_less(np.full(len(ts['time']),
-                                             inventory.index[i]),ts['time'])
-                np.testing.assert_equal(ts['data'][:,:,:].values,
+                                             inventory.index[i]).astype('datetime64[ns]'),
+                                             ts['time'].data)
+                np.testing.assert_equal(ts['data'].data[:, :, :],
                                         data[np.isin(coords['time'].values,
-                                             ts['time'].astype('datetime64[ns]').values)])
+                                             ts['time'].data.astype('datetime64[ns]'))])
 
     def test_read_decoded_image_stack(self):
         """
@@ -237,27 +238,28 @@ class NcRasterStackTest(unittest.TestCase):
         attr2 = {'unit': 'dB', 'fill_value': -9999}
         data = np.ones((num_files, xsize, ysize))
         ds = xr.Dataset({'data1': (dims, data,  attr1), 'data2': (dims, data, attr2)}, coords=coords)
+        filepath = os.path.join(self.path, "test.nc")
+        with NcRasterStack(mode='w') as stack:
+            stack.write(ds, filepath)
 
-        with NcRasterTimeStack(mode='w', out_path=self.path) as stack:
-            file_ts = stack.write(ds)
+        inventory = pd.DataFrame({'filepath': [filepath]})
+        with NcRasterStack(inventory=inventory, auto_decode=False) as stack:
+            data1 = stack.read(band='data1')['data1'].data
+            data2 = stack.read(band='data2')['data2'].data
 
-        with NcRasterTimeStack(file_ts=file_ts, auto_decode=False) as stack:
-            ts = stack.read()
-
-            np.testing.assert_equal(ts['data1'][:, 0:10, 0:10].values,
+            np.testing.assert_equal(data1[:, 0:10, 0:10],
                                     data[:, :10, :10])
-            np.testing.assert_equal(ts['data2'][:, 0:10, 0:10].values,
+            np.testing.assert_equal(data2[:, 0:10, 0:10],
                                     data[:, :10, :10])
 
-        with NcRasterTimeStack(file_ts=file_ts, auto_decode=True) as stack:
-            ts = stack.read()
+        with NcRasterStack(inventory=inventory, auto_decode=True) as stack:
+            data1 = stack.read(band='data1')['data1'].data
+            data2 = stack.read(band='data2')['data2'].data
 
-            np.testing.assert_equal(ts['data1'][:, 0:10, 0:10].values,
+            np.testing.assert_equal(data1[:, 0:10, 0:10],
                                     data[:, :10, :10]*2 + 3)
-            np.testing.assert_equal(ts['data2'][:, 0:10, 0:10].values,
+            np.testing.assert_equal(data2[:, 0:10, 0:10],
                                     data[:, :10, :10])
-
-
 
     def test_write_read_image_stack_single_nc(self):
         """
@@ -317,8 +319,8 @@ class NcRasterStackTest(unittest.TestCase):
 
         # read .tif stack
         with GeoTiffRasterStack(inventory=inventory) as stack:
-            img1 = stack.read(idx=datetime(2000,1,2))
-            img2 = stack.read(idx=datetime(2000,2,8))
+            img1 = stack.read(idx=datetime(2000, 1, 2))
+            img2 = stack.read(idx=datetime(2000, 2, 8))
 
         np.testing.assert_equal(img1,
                                 ds.sel(time='2000-01-02')['data'].values)

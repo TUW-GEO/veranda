@@ -425,7 +425,8 @@ class NcFile(object):
             if all([common_chunks == self.src[band].chunking() for band in bands]):  # check if all chunks are the same
                 for i, dim_name in enumerate(list(self.src.dimensions.keys())):
                     chunks[dim_name] = common_chunks[i]
-            src_var = xr.open_dataset(xr.backends.NetCDF4DataStore(self.src), chunks=chunks)
+            src_var = xr.open_dataset(xr.backends.NetCDF4DataStore(self.src), mask_and_scale=self.auto_decode,
+                                      chunks=chunks)
         else:
             src_var = self.src_var
 

@@ -13,6 +13,7 @@
 
 import os
 import copy
+import warnings
 import tempfile
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -84,14 +85,16 @@ class GeoTiffRasterStack:
         Meta data tags (default None).
     gdal_opt : dict, optional
         Driver specific control parameters (default None).
-    file_band : int, optional
-        When building the VRT stack the variable defines the band to be used.
+    auto_decode : bool, optional
+        If true, when reading ds, "scale_factor" and "add_offset" is applied (default is False).
+        ATTENTION: Also the xarray dataset may applies encoding/scaling what
+                can mess up things
     """
 
     def __init__(self, inventory=None, mode='r',
                  compression='LZW', blockxsize=512, blockysize=512,
                  geotrans=(0, 1, 0, 0, 0, 1), sref=None,
-                 tags=None, gdal_opt=None):
+                 tags=None, gdal_opt=None, auto_decode=False):
 
         self.inventory = inventory
         self.mode = mode
@@ -106,6 +109,7 @@ class GeoTiffRasterStack:
         self.blockysize = blockysize
         self.tags = tags
         self.gdal_opt = gdal_opt
+        self.auto_decode = auto_decode
 
         self._open()
 
@@ -133,9 +137,12 @@ class GeoTiffRasterStack:
             vrt_filepath = os.path.join(path, tmp_filename)
             filepaths = inventory.dropna()['filepath'].to_list()
             bands = 1 if "band" not in inventory.keys() else inventory.dropna()['band'].to_list()  # take first band as a default
-            nodatavals = -9999 if "nodataval" not in inventory.keys() else inventory.dropna()['nodataval'].to_list()   # take -9999 as a default no data value
-            create_vrt_file(vrt_filepath, filepaths, bands=bands, geotrans=self.geotrans, n_cols=self.shape[2],
-                            n_rows=self.shape[1], dtype=self.dtype, sref=self.sref, nodatavals=nodatavals)
+            nodatavals = -9999 if "nodataval" not in inventory.keys() else inventory.dropna()['nodataval'].to_list() # take -9999 as a default no data value
+            scale_factors = 1 if "scale_factor" not in inventory.keys() else inventory.dropna()['scale_factor'].to_list()
+            add_offsets = 1 if "add_offset" not in inventory.keys() else inventory.dropna()['add_offset'].to_list()
+            create_vrt_file(vrt_filepath, filepaths, bands=bands, geotrans=self.geotrans,
+                            shape=(self.shape[1], self.shape[2]), dtype=self.dtype, sref=self.sref,
+                            nodataval=nodatavals, scale_factor=scale_factors, add_offset=add_offsets)
             return gdal.Open(vrt_filepath, gdal.GA_ReadOnly)
         else:
             raise RuntimeError('Building VRT stack failed')
@@ -172,6 +179,7 @@ class GeoTiffRasterStack:
         data : numpy.ndarray
             Data set.
         """
+        decoder_kwargs = {} if decoder_kwargs is None else decoder_kwargs
 
         inventory = copy.deepcopy(self.inventory)
         rebuild_vrt = False
@@ -179,20 +187,14 @@ class GeoTiffRasterStack:
             inventory['band'] = band
             rebuild_vrt = True
 
-        if nodataval != -9999:
-            inventory['nodataval'] = nodataval
-            rebuild_vrt = True
-
         if idx is not None:
             inventory = inventory.loc[[idx]]
             rebuild_vrt = True
 
-        if rebuild_vrt:    # things have changed in the inventory, recreated vrt file
+        if rebuild_vrt:  # things have changed in the inventory, recreated vrt file
             vrt = self._build_stack(inventory)
         else:
             vrt = self.vrt
-
-        decoder_kwargs = {} if decoder_kwargs is None else decoder_kwargs
 
         if row is None and col is not None:
             row = 0
@@ -206,10 +208,45 @@ class GeoTiffRasterStack:
         else:
             data = vrt.ReadAsArray(col, row, n_cols, n_rows)
 
-        if decoder is not None:
-            data = decoder(data, nodataval=nodataval, **decoder_kwargs)
+        if self.auto_decode:
+            data = self._auto_decode(data, band, vrt)
+        else:
+            if decoder is not None:
+                data = decoder(data, nodataval=nodataval, **decoder_kwargs)
 
         return self._fill_nan(data)
+
+    def _auto_decode(self, data, band=1, vrt=None):
+        """
+        Applies auto-decoding (if activated) to data related to a specific band.
+
+        Parameters
+        ----------
+        data : np.array
+            Data related to `band`.
+        band : int, optional
+            Band number (defaults to 1).
+
+        Returns
+        -------
+        data : np.array
+            Decoded data if auto-decoding is activated.
+
+        """
+        vrt = vrt if vrt is not None else self.vrt
+        if self.auto_decode:
+            scale_factor = vrt.GetRasterBand(band).GetScale()
+            offset = vrt.GetRasterBand(band).GetOffset()
+            nodata = vrt.GetRasterBand(band).GetNoDataValue()
+            if (scale_factor != 1.) and (offset != 0.):
+                data = data.astype(float)
+                data[data == nodata] = np.nan
+                data = data * scale_factor + offset
+            else:
+                wrn_msg = "Automatic decoding is activated for band '{}', but attribute 'scale' and 'offset' " \
+                          "are missing!".format(band)
+                warnings.warn(wrn_msg)
+        return data
 
     def _fill_nan(self, data):
         """
@@ -289,6 +326,10 @@ class GeoTiffRasterStack:
         for name in ds.variables:
             if name == 'time':
                 continue
+            ds_attrs = ds[name].attrs.keys()
+            nodata = [ds[name].attrs["fill_value"]] if "fill_value" in ds_attrs else [-9999]
+            scale_factor = [ds[name].attrs["scale_factor"]] if "scale_factor" in ds_attrs else [1.]
+            add_offset = [ds[name].attrs["add_offset"]] if "add_offset" in ds_attrs else [0.]
 
             filepaths = []
             for i, timestamp in enumerate(timestamps):
@@ -297,11 +338,15 @@ class GeoTiffRasterStack:
                 filepaths.append(filepath)
 
                 with GeoTiffFile(filepath, mode='w', n_bands=1) as src:
-                    src.write(ds[name].isel(time=i).values, band=1)
+                    src.write(ds[name].isel(time=i).values, band=1, nodataval=nodata,
+                              scale_factor=scale_factor, add_offset=add_offset)
 
             bands = [1] * len(filepaths)
             var_dict[name] = pd.DataFrame({'filepath': filepaths,
-                                           'band': bands}, index=ds['time'].to_index())
+                                           'band': bands,
+                                           'nodataval': nodata,
+                                           'scale_factor': scale_factor,
+                                           'add_offset': add_offset}, index=ds['time'].to_index())
 
         return var_dict
 
@@ -310,8 +355,13 @@ class GeoTiffRasterStack:
         Iterate over image stack.
         """
 
-        for i, idx in enumerate(self.inventory.index):
-            yield idx, self.vrt.GetRasterBand(i+1).ReadAsArray()
+        for i, time_stamp in enumerate(self.inventory.index):
+            data = self.vrt.GetRasterBand(i+1).ReadAsArray()
+            band = 1
+            if 'band' in self.inventory.columns:
+                band = self.inventory.iloc[i]['band']
+
+            yield time_stamp, self._auto_decode(data, band)
 
     def export_to_nc(self, path, band='data', **kwargs):
         """
@@ -358,8 +408,8 @@ class GeoTiffRasterStack:
         self.close()
 
 
-def create_vrt_file(vrt_filepath, filepaths, nodatavals=None, bands=1, sref=None, geotrans=None,
-                    n_cols=None, n_rows=None, dtype=None):
+def create_vrt_file(vrt_filepath, filepaths, nodataval=None, scale_factor=None, add_offset=None, bands=1,
+                    sref=None, geotrans=None, shape=None, dtype=None):
     """
     Create a .VRT XML file. First file is used as master file.
 
@@ -383,20 +433,37 @@ def create_vrt_file(vrt_filepath, filepaths, nodatavals=None, bands=1, sref=None
             err_msg = "Number of bands ({}) and number of file paths ({}) mismatch.".format(n_bands, n_filepaths)
             raise ValueError(err_msg)
 
-    if nodatavals is not None:
-        if not isinstance(nodatavals, list):
-            nodatavals = [nodatavals] * n_filepaths
-
     # if one of these attributes is None take the first file to get the metadata from
-    load_md = any([elem is None for elem in [sref, geotrans, n_cols, n_rows, dtype]])
+    load_md = any([elem is None for elem in [sref, geotrans, shape, dtype,
+                                             nodataval, scale_factor, add_offset]])
     if load_md:
         src = gdal.Open(filepaths[0])
-        sref = src.GetProjection()
-        geotrans = src.GetGeoTransform()
-        n_cols = src.RasterXSize
-        n_rows = src.RasterYSize
-        dtype = r_gdal_dtype[src.GetRasterBand(bands[0]).DataType]
+        if sref is None:
+            sref = src.GetProjection()
+        if geotrans is None:
+            geotrans = src.GetGeoTransform()
+        if shape is None:
+            shape = (src.RasterYSize, src.RasterXSize)
+        if dtype is None:
+            dtype = r_gdal_dtype[src.GetRasterBand(bands[0]).DataType]
+        if scale_factor:
+            scale_factor = src.GetRasterBand(bands[0]).GetScale()
+        if add_offset is None:
+            add_offset = src.GetRasterBand(bands[0]).GetOffset()
+        if nodataval is None:
+            nodataval = src.GetRasterBand(bands[0]).GetNoDataValue()
         src = None
+
+    n_rows, n_cols = shape
+
+    if not isinstance(nodataval, list):
+        nodataval = [nodataval] * n_filepaths
+
+    if not isinstance(scale_factor, list):
+        scale_factor = [scale_factor] * n_filepaths
+
+    if not isinstance(add_offset, list):
+        add_offset = [add_offset] * n_filepaths
 
     attrib = {"rasterXSize": str(n_cols), "rasterYSize": str(n_rows)}
     vrt_root = ET.Element("VRTDataset", attrib=attrib)
@@ -424,8 +491,9 @@ def create_vrt_file(vrt_filepath, filepaths, nodatavals=None, bands=1, sref=None
         file_elem = ET.SubElement(simsrc_elem, "SourceProperties",
                                   attrib=attrib)
 
-        if nodatavals is not None:
-            ET.SubElement(band_elem, "NodataValue").text = str(nodatavals[i])
+        ET.SubElement(band_elem, "NodataValue").text = str(nodataval[i])
+        ET.SubElement(band_elem, "Scale").text = str(scale_factor[i])
+        ET.SubElement(band_elem, "Offset").text = str(add_offset[i])
 
     tree = ET.ElementTree(vrt_root)
     tree.write(vrt_filepath, encoding="UTF-8")
@@ -478,7 +546,7 @@ class NcRasterStack:
 
     def __init__(self, mode='r', inventory=None, geotrans=(0, 1, 0, 0, 0, 1),
                  sref=None, compression=2, chunksizes=None,
-                 chunks=None, time_units="days since 1900-01-01 00:00:00"):
+                 chunks=None, time_units="days since 1900-01-01 00:00:00", auto_decode=False):
 
         self.mfdataset = None
         self.shape = None
@@ -494,6 +562,7 @@ class NcRasterStack:
         self.chunksizes = chunksizes
         self.chunks = chunks
         self.time_units = time_units
+        self.auto_decode = auto_decode
 
         self._open()
 
@@ -519,14 +588,16 @@ class NcRasterStack:
                 self.mfdataset = xr.open_mfdataset(self.inventory.dropna()['filepath'].tolist(),
                                                    chunks=self.chunks,
                                                    combine="nested",
-                                                   concat_dim=self.inventory.index.name)
+                                                   concat_dim=self.inventory.index.name,
+                                                   mask_and_scale=self.auto_decode, use_cftime=False)
                 self.mfdataset = self.mfdataset.assign_coords({self.inventory.index.name: self.inventory.index})
                 gm_name = NcFile.get_gm_name(self.mfdataset)
                 if gm_name is not None:
                     self.mfdataset[gm_name] = self.mfdataset[gm_name].sel(**{self.inventory.index.name: 0}, drop=True)
             else:
                 self.mfdataset = xr.open_mfdataset(
-                    self.inventory.dropna()['filepath'].tolist(), chunks=self.chunks, combine='by_coords')
+                    self.inventory.dropna()['filepath'].tolist(), chunks=self.chunks, combine='by_coords',
+                    mask_and_scale=self.auto_decode, use_cftime=False)
         else:
             raise RuntimeError('Building stack failed')
 
@@ -588,7 +659,7 @@ class NcRasterStack:
         data = data_ar.to_dataset()
 
         if 'time' in list(data.dims.keys()) and data.variables['time'].dtype == 'float':
-            timestamps = netCDF4.num2date(data['time'], self.time_units)
+            timestamps = netCDF4.num2date(data['time'], self.time_units, only_use_cftime_datetimes=False)
             data = data.assign_coords({'time': timestamps})
 
         # add projection informations again
@@ -646,7 +717,8 @@ class NcRasterStack:
         """
 
         for i in range(self.mfdataset[var_name].shape[0]):
-            timestamp = netCDF4.num2date(self.mfdataset['time'][i].values, self.time_units)
+            timestamp = netCDF4.num2date(self.mfdataset['time'][i].values, self.time_units,
+                                         only_use_cftime_datetimes=False)
             yield timestamp, self.mfdataset[var_name][i, :, :]
 
     def write_netcdfs(self, ds, dir_path, stack_size="%Y%m", fn_prefix='', fn_suffix='.nc'):
@@ -709,8 +781,7 @@ class NcRasterStack:
                     geotrans=self.geotrans,
                     sref=self.sref,
                     chunksizes=self.chunksizes) as nc:
-            nc.write(ds, band=band, nodataval=nodataval, encoder=encoder,  encoder_kwargs=encoder_kwargs,
-                     auto_scale=auto_scale)
+            nc.write(ds, band=band, nodataval=nodataval, encoder=encoder,  encoder_kwargs=encoder_kwargs)
 
     def close(self):
         """
