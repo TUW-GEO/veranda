@@ -8,7 +8,7 @@
 ## Description
 *veranda* stands for *"vector and raster data access"* and is a place for IO related classes and operations dealing 
 with vector and raster data. Currently, there is only one module `io`, which adds support for GeoTIFF (`geotiff`) and 
-NetCDF (`netcdf`) files and their image stack representations (`timestack`).
+NetCDF (`netcdf`) files and their image stack representations (`stack`).
 
 ## Limitations and Outlook
 Support for vector data is still missing, which could for instance include reading and writing Shape-Files or well-known 
