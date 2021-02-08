@@ -8,7 +8,7 @@
 ## Description
 *veranda* stands for *"vector and raster data access"* and is a place for IO related classes and operations dealing 
 with vector and raster data. Currently, there is only one module `io`, which adds support for GeoTIFF (`geotiff`) and 
-NetCDF (`netcdf`) files and their image stack representations (`timestack`).
+NetCDF (`netcdf`) files and their image stack representations (`stack`).
 
 ## Limitations and Outlook
 Support for vector data is still missing, which could for instance include reading and writing Shape-Files or well-known 
@@ -29,7 +29,7 @@ pip install veranda
 ```
 **ATTENTION**: GDAL needs more OS support and has more dependencies then other packages and can therefore not be installed solely via pip.
 Please have a look at https://pypi.org/project/GDAL/ what requirements are needed. Thus, for a fresh setup, an existing environment 
-with a Python and GDAL installation are expected.
+with a Python and `gdal<=3.0.2`  installation are expected.
 
 ### conda
 The packages also comes along with one conda environment ``conda_environment.yml``. 

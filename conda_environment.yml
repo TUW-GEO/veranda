@@ -1,13 +1,11 @@
-name: veranda
+name: veranda_experimental
 channels:
     - conda-forge
 dependencies:
     - python=3.6
-    - gdal<=3.0.0
+    - gdal<=3.0.2
     - numpy
-    - pandas
     - pyproj
     - dask
     - xarray
     - netcdf4
-    - matplotlib

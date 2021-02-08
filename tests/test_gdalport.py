@@ -21,9 +21,8 @@ from tempfile import mkdtemp
 
 import numpy as np
 
-from veranda.io.gdalport import write_image
-from veranda.io.gdalport import open_image
 from veranda.io.gdalport import call_gdal_util
+from veranda.io.geotiff import GeoTiffFile
 
 
 class GdalportTest(unittest.TestCase):
@@ -40,24 +39,9 @@ class GdalportTest(unittest.TestCase):
         self.filename = os.path.join(test_dir, 'test.tif')
         self.filename_gdal_trans = os.path.join(test_dir, 'test_gdal_trans.tif')
 
-    def test_write_read(self):
-        """
-        Test write and read.
-        """
-        write_image(self.data, self.filename)
-        g_img = open_image(self.filename)
-        np.testing.assert_equal(g_img.read_band(1), self.data)
-
-    def test_write_read_nodata(self):
-        """
-        Test write and read.
-        """
-        write_image(self.data, self.filename, nodata=[0])
-        g_img = open_image(self.filename)
-        np.testing.assert_equal(g_img.read_band(1), self.data)
-
     def test_gdal_translate(self):
-        write_image(self.data, self.filename)
+        with GeoTiffFile(self.filename, mode='w') as gt_file:
+            gt_file.write(self.data)
         # configure options
         options = {'-of': 'GTiff', '-co': 'COMPRESS=LZW',
                    '-mo': ['parent_data_file="%s"' % os.path.basename(self.filename)], '-outsize': ('50%', '50%'),

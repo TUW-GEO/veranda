@@ -1,6 +1,4 @@
-gdal<=3.0.0
 numpy
-cftime<1.1
 pandas
 pyproj
 netCDF4

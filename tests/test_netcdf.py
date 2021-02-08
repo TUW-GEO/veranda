@@ -47,7 +47,7 @@ class NcTest(unittest.TestCase):
         Test a simple write and read operation.
         """
         data = np.ones((100, 100, 100), dtype=np.float32)
-        dims = ['time', 'x', 'y']
+        dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
         attr1 = {'unit': 'dB'}
         attr2 = {'unit': 'degree', 'fill_value': -9999}
@@ -112,7 +112,7 @@ class NcTest(unittest.TestCase):
         Test appending to existing NetCDF file.
         """
         data = np.ones((100, 100, 100), dtype=np.float32)
-        dims = ['time', 'x', 'y']
+        dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
 
         self.ds = xr.Dataset({'sig': (dims, data),
@@ -138,7 +138,7 @@ class NcTest(unittest.TestCase):
         Test setting chunksize.
         """
         data = np.ones((100, 100, 100), dtype=np.float32)
-        dims = ['time', 'x', 'y']
+        dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
 
         self.ds = xr.Dataset({'sig': (dims, data),
@@ -150,15 +150,15 @@ class NcTest(unittest.TestCase):
 
         with NcFile(self.filename, mode='r_netcdf') as nc:
             ds = nc.read()
-            self.assertEqual(ds['sig'].chunking(), list(chunksizes))
-            self.assertEqual(ds['inc'].chunking(), list(chunksizes))
+            self.assertEqual(ds['sig'].data.chunksize, chunksizes)
+            self.assertEqual(ds['inc'].data.chunksize, chunksizes)
 
     def test_chunk_cache(self):
         """
         Test setting chunk cache.
         """
         data = np.ones((100, 100, 100), dtype=np.float32)
-        dims = ['time', 'x', 'y']
+        dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
 
         self.ds = xr.Dataset({'sig': (dims, data),
@@ -185,7 +185,7 @@ class NcTest(unittest.TestCase):
         Test time series and time units.
         """
         data = np.ones((100, 100, 100), dtype=np.float32)
-        dims = ['time', 'x', 'y']
+        dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
 
         self.ds = xr.Dataset({'sig': (dims, data),
@@ -197,8 +197,7 @@ class NcTest(unittest.TestCase):
 
         with NcFile(self.filename, time_units=time_units) as nc:
             ds = nc.read()
-            time_stamps = netCDF4.num2date(ds['time'][:], nc.time_units)
-            np.testing.assert_array_equal(pd.DatetimeIndex(time_stamps),
+            np.testing.assert_array_equal(pd.DatetimeIndex(ds['time'].data),
                                           coords['time'])
 
     def test_geotransform(self):
@@ -207,24 +206,24 @@ class NcTest(unittest.TestCase):
         """
         xdim = 100
         ydim = 200
-        data = np.ones((100, xdim, ydim), dtype=np.float32)
-        dims = ['time', 'x', 'y']
+        data = np.ones((100, ydim, xdim), dtype=np.float32)
+        dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
 
         self.ds = xr.Dataset({'sig': (dims, data),
                               'inc': (dims, data)}, coords=coords)
 
-        geotransform = (3000000.0, 500.0, 0.0, 1800000.0, 0.0, -500.0)
-        with NcFile(self.filename, mode='w', geotransform=geotransform) as nc:
+        geotrans = (3000000.0, 500.0, 0.0, 1800000.0, 0.0, -500.0)
+        with NcFile(self.filename, mode='w', geotrans=geotrans) as nc:
             nc.write(self.ds)
 
         with NcFile(self.filename) as nc:
             ds = nc.read()
 
-        x = geotransform[0] + (0.5 + np.arange(xdim)) * geotransform[1] + \
-            (0.5 + np.arange(xdim)) * geotransform[2]
-        y = geotransform[3] + (0.5 + np.arange(ydim)) * geotransform[4] + \
-            (0.5 + np.arange(ydim)) * geotransform[5]
+        x = geotrans[0] + (0.5 + np.arange(xdim)) * geotrans[1] + \
+            (0.5 + np.arange(xdim)) * geotrans[2]
+        y = geotrans[3] + (0.5 + np.arange(ydim)) * geotrans[4] + \
+            (0.5 + np.arange(ydim)) * geotrans[5]
 
         np.testing.assert_array_equal(ds['x'].values, x)
         np.testing.assert_array_equal(ds['y'].values, y)
