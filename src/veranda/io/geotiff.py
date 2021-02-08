@@ -24,10 +24,6 @@ import numpy as np
 from osgeo import gdal
 from osgeo import gdal_array
 
-# TODO: @Sebhahn: should we steer this?
-# Todo: rename ct
-# gdal.SetCacheMax(1024**3)
-
 _numpy2gdal_dtype = {"bool": 1,
                      "uint8": 1,
                      "int8": 1,

@@ -112,16 +112,19 @@ class NcFile(object):
     def metadata(self):
         return self.get_global_atts()
 
-    def _open(self, n_rows=None, n_cols=None, create_time_dim=True, auto_scale=False):
+    def _open(self, n_rows=None, n_cols=None, create_time_dim=True):
         """
         Open file.
 
         Parameters
         ----------
-        y_coords : int, optional
-            Number rows or size of y dimension.
-        x_coords : int, optional
-            Number of columns or size of x dimension.
+        n_rows : int, optional
+            Number rows.
+        n_cols : int, optional
+            Number of columns.
+        create_time_dim : bool, optional
+            If true, a temporal dimension is added to the NetCDF data set (default).
+
         """
 
         if self.mode in ['r', 'r_xarray']:
@@ -262,7 +265,7 @@ class NcFile(object):
             else:
                 self.shape = (self.src.dimensions['y'].size, self.src.dimensions['x'].size)
 
-    def write(self, ds, band=None, nodataval=None, encoder=None, encoder_kwargs=None):
+    def write(self, ds, nodataval=None, encoder=None, encoder_kwargs=None, **kwargs):
         """
         Write data into netCDF4 file.
 
@@ -270,6 +273,10 @@ class NcFile(object):
         ----------
         ds : xarray.Dataset
             Data set containing dims ['time', 'y', 'x'].
+        encoder : function
+            Encoding function expecting a NumPy array as input.
+        encoder_kwargs : dict, optional
+            Keyword arguments for the encoder.
 
         """
         encoder_kwargs = {} if encoder_kwargs is None else encoder_kwargs
@@ -350,7 +357,6 @@ class NcFile(object):
         for key, value in ds.attrs.items():
             self.src.setncattr(key,value)
 
-
     def read(self, row=None, col=None, n_rows=1, n_cols=1, band=None, nodataval=None, decoder=None,
              decoder_kwargs=None):
         """
@@ -370,7 +376,7 @@ class NcFile(object):
             Number of columns to read (default is 1).
         band : str or list of str, optional
             Band numbers/names. If None, all bands will be read.
-        nodatavals : tuple or list, optional
+        nodataval : tuple or list, optional
             List of no data values for each band.
             Default: -9999 for each band.
         decoder : function, optional
