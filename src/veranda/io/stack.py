@@ -133,7 +133,7 @@ class GeoTiffRasterStack:
         if inventory is not None:
             path = tempfile.gettempdir()
             date_str = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-            tmp_filename = "{:}.vrt".format(date_str)
+            tmp_filename = "{}_{:}.vrt".format(os.getpid(),date_str)
             vrt_filepath = os.path.join(path, tmp_filename)
             filepaths = inventory.dropna()['filepath'].to_list()
             bands = 1 if "band" not in inventory.keys() else inventory.dropna()['band'].to_list()  # take first band as a default
