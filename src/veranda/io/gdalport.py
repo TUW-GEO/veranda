@@ -207,12 +207,16 @@ def call_gdal_util(util_name, gdal_path=None, src_files=None, dst_file=None,
     if not gdal_path:
         raise OSError("gdal utility not found in system environment!")
 
-    # prepare the command string
+     # prepare the command string
     cmd = []
     gdal_cmd = os.path.join(gdal_path, util_name) if gdal_path else util_name
+
+    if ".py" in gdal_cmd and "Win" in platform.system():
+        cmd.append('python')
+
     # put gdal_cmd in double quotation
     cmd.append('"%s"' % gdal_cmd)
-
+    
     for k, v in options.items():
         is_iterable = isinstance(v, (tuple, list))
         if k in _opt_2b_in_quote:
