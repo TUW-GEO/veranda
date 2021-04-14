@@ -211,7 +211,7 @@ def call_gdal_util(util_name, gdal_path=None, src_files=None, dst_file=None,
     cmd = []
     gdal_cmd = os.path.join(gdal_path, util_name) if gdal_path else util_name
 
-    if ".py" in gdal_cmd and "Win" in platform.system():
+    if ".py" in gdal_cmd and "win" in platform.system().lower():
         cmd.append('python')
 
     # put gdal_cmd in double quotation
