@@ -1,16 +1,22 @@
 import os
 import abc
+import warnings
 import secrets
 import tempfile
 import xarray as xr
 import numpy as np
 import pandas as pd
+from osgeo import ogr
 from osgeo import gdal
 from datetime import datetime
 import xml.etree.ElementTree as ET
 
+from geospade.tools import any_geom2ogr_geom
+from geospade.tools import rel_extent
 from geospade.crs import SpatialRef
 from geospade.raster import RasterGeometry
+from geospade.raster import Tile
+from geospade.raster import MosaicGeometry
 
 _numpy2gdal_dtype = {"bool": 1,
                      "uint8": 1,
@@ -46,10 +52,12 @@ r_gdal_dtype = {gdal.GDT_Byte: "byte",
 
 
 class RasterData:
-    def __init__(self, file_register, geom, data=None):
+    def __init__(self, file_register, mosaic, data=None, mosaic_class=MosaicGeometry, mosaic_kwargs=None):
         self._file_register = file_register
-        self._geom = geom
+        self._mosaic = mosaic
         self._data = data
+        self._mosaic_class = mosaic_class
+        self._mosaic_kwargs = dict() if mosaic_kwargs is None else mosaic_kwargs
 
     @abc.abstractmethod
     def read(self):
@@ -67,18 +75,67 @@ class RasterData:
     def n_layers(self):
         return len(self._file_register)
 
-    def read_xy(self, x, y, sref=None):
-        row, col = self._geom.xy2rc(x, y, sref=sref)
-        self._geom.slice_by_rc(row, col, inplace=True)
+    def select_tile(self, tile_name):
+        if 'geom_id' in self._file_register.columns:
+            self._file_register = self._file_register.loc[self._file_register['geom_id'] == tile_name]
+
+            # TODO: implement this in geospade.raster.MosaicGeometry
+            self._mosaic._tiles['active'] = False
+            self._mosaic._tiles.loc[tile_name, 'active'] = True
+
+        else:
+            wrn_msg = "The data is not available as a mosaic anymore."
+            warnings.warn(wrn_msg)
+        return self
+
+    def select_xy(self, x, y, sref=None):
+        tile_oi = self._mosaic.xy2tile(x, y, sref=sref)
+        row, col = tile_oi.xy2rc(x, y, sref=sref)
+
+        tile_oi.slice_by_rc(row, col, inplace=True)
+        tile_oi.active = True
+        self._mosaic = self._mosaic_class([tile_oi], check_consistency=False, **self._mosaic_kwargs)
+
+        if 'geom_id' in self._file_register.columns:
+            self._file_register = self._file_register.drop('geom_id')
+
         if self._data is not None:
             self._data = self._data[..., row, col]
         return self
 
-    def read_bbox(self, bbox, sref=None):
-        return self.read()
+    def select_bbox(self, bbox, sref=None):
+        ogr_geom = any_geom2ogr_geom(bbox, sref=sref)
+        return self.select_polygon(ogr_geom, apply_mask=False)
 
-    def read_polygon(self, polygon, sref=None, apply_mask=True):
-        return self.read()
+    def select_polygon(self, polygon, sref=None, apply_mask=True):
+        tiles_oi = list(self._mosaic.slice_tiles_by_geom(polygon, active_only=False).values())
+
+        # TODO: implement this in geospade.raster.MosaicGeometry
+        for tile_oi in tiles_oi:
+            tile_oi.active = True
+
+        self._mosaic = self._mosaic_class(tiles_oi, check_consistency=False, **self._mosaic_kwargs)
+
+        if 'geom_id' in self._file_register.columns:
+            geom_ids_mask = self._file_register['geom_id'] == tiles_oi[0].parent_root.name
+            for tile_oi in tiles_oi[1:]:
+                geom_ids_mask_curr = self._file_register['geom_id'] == tile_oi.parent_root.name
+                geom_ids_mask = geom_ids_mask | geom_ids_mask_curr
+            self._file_register = self._file_register.loc[geom_ids_mask]
+
+        if self._data is not None:
+            tile_oi = self._mosaic.tiles[0]
+            tile_oi.slice_by_geom(polygon, sref=sref, inplace=True)
+
+            # TODO: implement this in geospade.raster.RasterGeometry
+            origin = (tile_oi.parent.ul_x, tile_oi.parent.ul_y)
+
+            min_col, min_row, max_col, max_row = rel_extent(origin, tile_oi.coord_extent,
+                                                            x_pixel_size=tile_oi.x_pixel_size,
+                                                            y_pixel_size=tile_oi.y_pixel_size)
+            self._data = self._data[..., min_row: max_row + 1, min_col:max_col + 1]
+
+        return self
 
 
 class GeoTiffStack(RasterData):
@@ -103,23 +160,69 @@ class GeoTiffStack(RasterData):
             geotrans = gt_driver.geotrans
             n_rows, n_cols = gt_driver.n_rows,  gt_driver.n_cols
 
-        raster_geom = RasterGeometry(n_rows, n_cols, sref=SpatialRef(sref_wkt), geotrans=geotrans)
+        tile = Tile(n_rows, n_cols, sref=SpatialRef(sref_wkt), geotrans=geotrans, name=1)
+        mosaic_geom = MosaicGeometry([tile], check_consistency=False)
 
-        return cls(file_register, raster_geom)
+        return cls(file_register, mosaic_geom)
 
-    def read(self, row=0, col=0, n_rows=None, n_cols=None, bands=(1,), engine='vrt', auto_decode=False,
-             decoder=None, decoder_kwargs=None):
+    @classmethod
+    def from_mosaic_filepaths(cls, filepaths):
+        file_register_dict = dict()
+        file_register_dict['filepath'] = filepaths
+        file_register_dict['io_pointer'] = [None] * len(filepaths)
+
+        geom_ids = []
+        layer_ids = []
+        tiles = []
+        tile_idx = 1
+        for filepath in filepaths[1:]:
+            with GeoTiffDriver(filepath, 'r') as gt_driver:
+                sref_wkt = gt_driver.sref_wkt
+                geotrans = gt_driver.geotrans
+                n_rows, n_cols = gt_driver.n_rows, gt_driver.n_cols
+            curr_tile = Tile(n_rows, n_cols, sref=SpatialRef(sref_wkt), geotrans=geotrans, name=tile_idx)
+            curr_tile_idx = None
+            for tile in tiles:
+                if curr_tile == tile:
+                    curr_tile_idx = tile.name
+                    break
+            if curr_tile_idx is None:
+                tiles.append(curr_tile)
+                curr_tile_idx = tile_idx
+                tile_idx += 1
+
+            geom_ids.append(curr_tile_idx)
+            layer_id = sum(np.array(geom_ids) == curr_tile_idx)
+            layer_ids.append(layer_id)
+
+        file_register_dict['geom_id'] = geom_ids
+        file_register_dict['layer_id'] = layer_ids
+        file_register = pd.DataFrame(file_register_dict)
+
+        mosaic_geom = MosaicGeometry(tiles, check_consistency=False)
+
+        return cls(file_register, mosaic_geom)
+
+    def read(self, bands=(1,), engine='vrt', auto_decode=False, decoder=None, decoder_kwargs=None, tile_class=Tile,
+             tile_kwargs=None):
+        n_cols = self._mosaic.n_cols if n_cols is None else n_cols
+        n_rows = self._mosaic.n_rows if n_rows is None else n_rows
+
         if engine == 'vrt':
             data = self.__read_vrt_stack(row=row, col=col, n_rows=n_rows, n_cols=n_cols, bands=bands,
                                          auto_decode=auto_decode, decoder=None, decoder_kwargs=None)
         elif engine == 'parallel':
-            data = self._read_parallel(row=row, col=col, n_rows=n_rows, n_cols=n_cols, bands=bands,
+            data = self.__read_parallel(row=row, col=col, n_rows=n_rows, n_cols=n_cols, bands=bands,
                                        auto_decode=auto_decode, decoder=None, decoder_kwargs=None)
         else:
             err_msg = f"Engine '{engine}' is not supported!"
             raise ValueError(err_msg)
 
+        if n_cols ==
+        tile = tile_class(n_rows, n_cols)
+        self._mosaic_class
         self._data = self._to_xarray(data, bands)
+        return self._data
 
     def __create_vrt_file(self, vrt_filepath, bands=(1,)):
         filepaths = self._file_register['filepath']
@@ -142,21 +245,21 @@ class GeoTiffStack(RasterData):
                 band_attr_dict['dtype'].append(gt_driver.dtype_names[b_idx])
                 band_attr_dict['blocksize'].append(gt_driver.blocksizes[b_idx])
 
-        attrib = {"rasterXSize": str(self._geom.n_cols), "rasterYSize": str(self._geom.n_rows)}
+        attrib = {"rasterXSize": str(self._mosaic.n_cols), "rasterYSize": str(self._mosaic.n_rows)}
         vrt_root = ET.Element("VRTDataset", attrib=attrib)
 
         geot_elem = ET.SubElement(vrt_root, "GeoTransform")
-        geot_elem.text = ",".join(map(str, self._geom.geotrans))
+        geot_elem.text = ",".join(map(str, self._mosaic.geotrans))
 
         geot_elem = ET.SubElement(vrt_root, "SRS")
-        geot_elem.text = self._geom.sref.wkt
+        geot_elem.text = self._mosaic.sref.wkt
 
-        i = 0
+        i = 1
         for f_idx in range(n_filepaths):
+            filepath = filepaths[f_idx]
             for b_idx in range(n_bands):
                 band = bands[b_idx]
-                filepath = filepaths[f_idx]
-                attrib = {"dataType": band_attr_dict['dtype'][b_idx], "band": str(i + 1)}
+                attrib = {"dataType": band_attr_dict['dtype'][b_idx], "band": str(i)}
                 band_elem = ET.SubElement(vrt_root, "VRTRasterBand", attrib=attrib)
                 simsrc_elem = ET.SubElement(band_elem, "SimpleSource")
                 attrib = {"relativetoVRT": "0"}
@@ -164,23 +267,26 @@ class GeoTiffStack(RasterData):
                 file_elem.text = filepath
                 ET.SubElement(simsrc_elem, "SourceBand").text = str(band)
 
-                attrib = {"RasterXSize": str(self._geom.n_cols), "RasterYSize": str(self._geom.n_rows),
+                attrib = {"RasterXSize": str(self._mosaic.n_cols), "RasterYSize": str(self._mosaic.n_rows),
                           "DataType": band_attr_dict['dtype'][b_idx],
                           "BlockXSize": str(band_attr_dict['blocksize'][b_idx][0]),
                           "BlockYSize": str(band_attr_dict['blocksize'][b_idx][1])}
 
                 file_elem = ET.SubElement(simsrc_elem, "SourceProperties", attrib=attrib)
 
+                scale_factor = band_attr_dict['scale_factor'][b_idx]
+                scale_factor = 1 if scale_factor is None else scale_factor
                 ET.SubElement(band_elem, "NodataValue").text = str(band_attr_dict['nodataval'][b_idx])
-                ET.SubElement(band_elem, "Scale").text = str(band_attr_dict['scale_factor'][b_idx])
+                ET.SubElement(band_elem, "Scale").text = str(scale_factor)
                 ET.SubElement(band_elem, "Offset").text = str(band_attr_dict['offset'][b_idx])
-                i += 0
+                i += 1
 
         tree = ET.ElementTree(vrt_root)
         tree.write(vrt_filepath, encoding="UTF-8")
 
     def __read_vrt_stack(self, row=0, col=0, n_rows=None, n_cols=None,  bands=(1,), reset_io=False, auto_decode=False,
                          decoder=None, decoder_kwargs=None):
+        n_bands = len(bands)
         ref_io = self._file_register['io_pointer'].iloc[0]
         io_is_null = pd.isnull(ref_io)
         if io_is_null or reset_io:
@@ -195,12 +301,11 @@ class GeoTiffStack(RasterData):
             self._file_register['io_poiner'] = [src] * self.n_layers
 
         decoder_kwargs = {} if decoder_kwargs is None else decoder_kwargs
-        n_cols = self._geom.n_cols if n_cols is None else n_cols
-        n_rows = self._geom.n_rows if n_rows is None else n_rows
 
         data = dict()
+        vrt_data = ref_io.ReadAsArray(col, row, n_cols, n_rows)
         for band in bands:
-            band_data = ref_io.GetRasterBand(band).ReadAsArray(col, row, n_cols, n_rows)
+            band_data = vrt_data[(band - 1)::n_bands, ...]
             scale_factor = ref_io.GetRasterBand(band).GetScale()
             nodataval = ref_io.GetRasterBand(band).GetNoDataValue()
             offset = ref_io.GetRasterBand(band).GetOffset()
@@ -219,7 +324,7 @@ class GeoTiffStack(RasterData):
 
         return data
 
-    def _read_parallel(self):
+    def __read_parallel(self):
         pass
 
     def _to_xarray(self, data, bands):
@@ -232,8 +337,8 @@ class GeoTiffStack(RasterData):
                 coord_dict[coord] = self._file_register.index
             else:
                 coord_dict[coord] = self._file_register[coord]
-        coord_dict['x'] = self._geom.x_coords
-        coord_dict['y'] = self._geom.y_coords
+        coord_dict['x'] = self._mosaic.x_coords
+        coord_dict['y'] = self._mosaic.y_coords
 
         xar_dict = dict()
         for band in bands:
@@ -279,7 +384,7 @@ class GeoTiffDriver:
 
     @property
     def dtype_names(self):
-        return (gdal.GetDataTypeName(dtype) for dtype in self.dtypes)
+        return [gdal.GetDataTypeName(dtype) for dtype in self.dtypes]
 
     def _open(self):
 
@@ -292,15 +397,20 @@ class GeoTiffDriver:
             self.compression = ...
             self.is_bigtiff = ...
             self.is_tiled = ...
-            self.blockxsize = ...
-            self.blockysize = ...
 
-            self.bands = tuple([band for band in range(self.n_bands) if self.src.GetRasterBand(band) is not None])
-            self.scale_factors = tuple([self.src.GetRasterBand(band).GetScale() for band in self.bands])
-            self.offsets = tuple([self.src.GetRasterBand(band).GetOffset() for band in self.bands])
-            self.nodatavals = tuple([self.src.GetRasterBand(band).GetNoDataValue() for band in self.bands])
-            self.dtypes = tuple([self.src.GetRasterBand(band).DataType for band in self.bands])
-            self.blocksizes = tuple([self.src.GetRasterBand(band).GetBlockSize() for band in self.bands])
+            self.bands = []
+            self.scale_factors = []
+            self.offsets = []
+            self.nodatavals = []
+            self.dtypes = []
+            self.blocksizes = []
+            for band in range(1, self.src.RasterCount + 1):
+                self.bands.append(band)
+                self.scale_factors.append(self.src.GetRasterBand(band).GetScale())
+                self.offsets.append(self.src.GetRasterBand(band).GetOffset())
+                self.nodatavals.append(self.src.GetRasterBand(band).GetNoDataValue())
+                self.dtypes.append(self.src.GetRasterBand(band).DataType)
+                self.blocksizes.append(self.src.GetRasterBand(band).GetBlockSize())
 
     def read(self, row=0, col=0, n_rows=None, n_cols=None, bands=None, decoder=None, decoder_kwargs=None):
         """
@@ -384,4 +494,5 @@ if __name__ == '__main__':
     import glob
     filepaths = glob.glob(r'D:\data\code\yeoda\2021_11_29__rq_workshop\data\Sentinel-1_CSAR\IWGRDH\parameters\datasets\par\B0104\EQUI7_EU010M\E041N022T1\mmensig0\*VV*.tif')
     gt_stack = GeoTiffStack.from_filepaths(filepaths)
-    gt_stack.read(0, 0, 1, 1)
+    data = gt_stack.read(0, 0, 1, 1)
+    pass
