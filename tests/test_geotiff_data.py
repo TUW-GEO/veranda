@@ -5,7 +5,7 @@ from osgeo import ogr
 from shapely.geometry import Polygon
 from geospade.crs import SpatialRef
 
-from veranda.data.raster import GeoTiffData
+from veranda.data.raster.base import GeoTiffData
 
 
 def create_geotiff_data():
@@ -85,7 +85,7 @@ def test_write():
 
 if __name__ == '__main__':
     import matplotlib
-    import matplotlib.pyplot as plt
+
     matplotlib.use('Qt5Agg')
     #test_ts_reading_from_polygon()
     #test_export()

@@ -1,5 +1,3 @@
-import os
-import abc
 import warnings
 import secrets
 import tempfile
@@ -12,6 +10,7 @@ from osgeo import gdal
 from affine import Affine
 from datetime import datetime
 from multiprocessing import shared_memory, Pool, RawArray
+#from threading
 
 from geospade.tools import any_geom2ogr_geom
 from geospade.tools import rel_extent
@@ -24,189 +23,7 @@ from geospade.raster import MosaicGeometry
 from veranda.driver.geotiff import GeoTiffDriver
 from veranda.driver.geotiff import r_gdal_dtype
 from veranda.driver.geotiff import create_vrt_file
-
-
-class RasterData:
-    def __init__(self, file_register, mosaic, data=None, file_dimension='idx', file_coords=None):
-        self._file_register = file_register
-        self._drivers = dict()
-        self._mosaic = mosaic
-        self._data = data
-        self._file_dim = file_dimension
-        self._file_coords = [self._file_dim] if file_coords is None else file_coords
-
-    @abc.abstractmethod
-    def read(self, auto_decode=False, decoder=None, decoder_kwargs=None, **kwargs):
-        pass
-
-    @abc.abstractmethod
-    def write(self, data, encoder=None, encoder_kwargs=None, overwrite=False, **kwargs):
-        pass
-
-    @abc.abstractmethod
-    def export(self, encoder=None, encoder_kwargs=None, overwrite=False, **kwargs):
-        pass
-
-    @abc.abstractmethod
-    def _to_xarray(self, *args, **kwargs):
-        pass
-
-    @classmethod
-    def _from_xarray(cls, data, file_register):
-        sref_wkt = data.spatial_ref.attrs.get('spatial_ref')
-        x_pixel_size = data.x.data[1] - data.x.data[0]
-        y_pixel_size = data.y.data[0] - data.y.data[1]
-        extent = [data.x.data[0], data.y.data[-1] - y_pixel_size, data.x.data[-1] + x_pixel_size, data.y.data[0]]
-        tile = Tile.from_extent(extent, SpatialRef(sref_wkt),
-                                x_pixel_size=x_pixel_size, y_pixel_size=y_pixel_size,
-                                name=1)
-        mosaic = MosaicGeometry([tile], check_consistency=False)
-        return cls(file_register, mosaic, data=data)
-
-    @classmethod
-    def from_other(cls, raster_data, file_register=None, mosaic=None, data=None, file_dimension=None, file_coords=None):
-        file_register = raster_data._file_register if file_register is None else file_register
-        mosaic = raster_data._mosaic if mosaic is None else mosaic
-        data = raster_data._data if data is None else data
-        file_dimension = raster_data._file_dim if file_dimension is None else file_dimension
-        file_coords = raster_data._file_coords if file_coords is None else file_coords
-
-        return cls(file_register, mosaic, data=data, file_dimension=file_dimension, file_coords=file_coords)
-
-    @abc.abstractmethod
-    def apply_nan(self):
-        for dvar in self._data.data_vars:
-            dar = self._data[dvar]
-            self._data[dvar] = dar.where(dar != dar.attrs['fill_value'])
-
-    @property
-    def n_layers(self):
-        return max(self._file_register['layer_id'])
-
-    # TODO data also needs to be cropped!
-    def select_layers(self, layer_ids):
-        self.close()
-        self._file_register = self._file_register[self._file_register['layer_id'].isin(layer_ids)]
-        return self
-
-    def select_tile(self, tile_name):
-        if 'geom_id' in self._file_register.columns:
-            self._file_register = self._file_register.loc[self._file_register['geom_id'] == tile_name]
-            self._mosaic.slice_by_tile_names([tile_name])
-        else:
-            wrn_msg = "The data is not available as a mosaic anymore."
-            warnings.warn(wrn_msg)
-        return self
-
-    def select_xy(self, x, y, sref=None, inplace=True, child_class=None,
-                  child_class_kwargs=None):
-        child_class = RasterData if child_class is None else child_class
-        child_class_kwargs = dict() if child_class_kwargs is None else child_class_kwargs
-        tile_oi = self._mosaic.xy2tile(x, y, sref=sref)
-        raster_data = None
-        if tile_oi is not None:
-            row, col = tile_oi.xy2rc(x, y, sref=sref)
-            tile_oi.slice_by_rc(row, col, inplace=True, name=1)
-            tile_oi.active = True
-            mosaic = self._mosaic._from_sliced_tiles([tile_oi])
-
-            if 'geom_id' in self._file_register.columns:
-                file_register = self._file_register.drop(columns='geom_id')
-            else:
-                file_register = self._file_register
-
-            data = None
-            if self._data is not None:
-                xrars = dict()
-                for dvar in self._data.data_vars:
-                    xrars[dvar] = self._data[dvar][..., row:row+1, col:col+1]
-                data = xr.Dataset(xrars)
-
-            raster_data = child_class(file_register, mosaic, data, self._file_dim, self._file_coords,
-                                      **child_class_kwargs)
-
-            if inplace:
-                self._data = data
-                self._mosaic = mosaic
-                self._file_register = file_register
-                raster_data = self
-
-        return raster_data
-
-    def select_bbox(self, bbox, sref=None):
-        ogr_geom = any_geom2ogr_geom(bbox, sref=sref)
-        return self.select_polygon(ogr_geom, apply_mask=False)
-
-    def select_polygon(self, polygon, sref=None, apply_mask=True, inplace=True, child_class=None,
-                       child_class_kwargs=None):
-        child_class = RasterData if child_class is None else child_class
-        child_class_kwargs = dict() if child_class_kwargs is None else child_class_kwargs
-        polygon = any_geom2ogr_geom(polygon, sref=sref)
-        sliced_mosaic = self._mosaic.slice_mosaic_by_geom(polygon, active_only=False)
-
-        if apply_mask:
-            if not sliced_mosaic.sref.osr_sref.IsSame(sref.osr_sref):
-                polygon = transform_geom(polygon, sliced_mosaic.sref)
-            for tile in sliced_mosaic.tiles:
-                intrsctn = tile.boundary_ogr.Intersection(polygon)
-                intrsctn.FlattenTo2D()
-
-                polygon_mask = rasterise_polygon(shapely.wkt.loads(intrsctn.ExportToWkt()),
-                                                 tile.x_pixel_size,
-                                                 tile.y_pixel_size,
-                                                 extent=tile.coord_extent)
-
-                tile.mask = tile.mask * polygon_mask
-
-        mosaic = self._mosaic._from_sliced_tiles(sliced_mosaic.tiles)
-
-        if 'geom_id' in self._file_register.columns:
-            geom_ids_mask = self._file_register['geom_id'] == self._mosaic.tiles[0].parent_root.name
-            for tile in self._mosaic.tiles[1:]:
-                geom_ids_mask_curr = self._file_register['geom_id'] == tile.parent_root.name
-                geom_ids_mask = geom_ids_mask | geom_ids_mask_curr
-            file_register = self._file_register.loc[geom_ids_mask]
-        else:
-            file_register = self._file_register
-
-        data = None
-        if self._data is not None:
-            ref_tile = self._mosaic.tiles[0]
-            ref_tile.slice_by_geom(polygon, sref=sref, inplace=True)
-            origin = (ref_tile.parent.ul_x, ref_tile.parent.ul_y)
-
-            min_col, min_row, max_col, max_row = rel_extent(origin, ref_tile.coord_extent,
-                                                            x_pixel_size=ref_tile.x_pixel_size,
-                                                            y_pixel_size=ref_tile.y_pixel_size)
-
-            xrars = dict()
-            for dvar in self._data.data_vars:
-                xrars[dvar] = self._data[dvar][..., min_row: max_row + 1, min_col:max_col + 1]
-            data = xr.Dataset(xrars)
-
-        raster_data = child_class(file_register, mosaic, data, self._file_dim, self._file_coords,
-                                  **child_class_kwargs)
-
-        if inplace:
-            self._data = data
-            self._mosaic = mosaic
-            self._file_register = file_register
-            raster_data = self
-
-        return raster_data
-
-    def close(self):
-        self._file_register['driver_id'] = None
-        for driver in self._drivers.values():
-            driver.close()
-        self._drivers = dict()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args, **kwargs):
-        self.close()
-
+from veranda.raster.base import RasterData
 
 PROC_OBJS = {}
 
@@ -450,7 +267,7 @@ class GeoTiffData(RasterData):
 
         coord_dict = dict()
         for coord in self._file_coords:
-            if coord == 'idx':
+            if coord == 'layer_id':
                 coord_dict[coord] = range(1, self.n_layers + 1)
             else:
                 coord_dict[coord] = self._file_register[coord]
@@ -469,6 +286,79 @@ class GeoTiffData(RasterData):
         xrds.rio.write_transform(Affine(*ref_tile.geotrans), inplace=True)
 
         return xrds
+
+
+class GeoTiffData(RasterData):
+    def __init__(self, file_register, mosaic, data=None, file_dimension='idx', file_coords=None):
+        super().__init__(file_register, mosaic, data=data, file_dimension=file_dimension, file_coords=file_coords)
+
+    @classmethod
+    def from_filepaths(cls, filepaths):
+        n_filepaths = len(filepaths)
+        file_register_dict = dict()
+        file_register_dict['filepath'] = filepaths
+        file_register_dict['geom_id'] = [1] * n_filepaths
+        file_register_dict['layer_id'] = list(range(n_filepaths))
+        file_register_dict['driver_id'] = [None] * len(filepaths)
+        file_register = pd.DataFrame(file_register_dict)
+
+        ref_filepath = filepaths[0]
+        with GeoTiffDriver(ref_filepath, 'r') as gt_driver:
+            sref_wkt = gt_driver.sref_wkt
+            geotrans = gt_driver.geotrans
+            n_rows, n_cols = gt_driver.shape
+
+        tile = Tile(n_rows, n_cols, sref=SpatialRef(sref_wkt), geotrans=geotrans, name=1)
+        mosaic_geom = MosaicGeometry([tile], check_consistency=False)
+
+        return cls(file_register, mosaic_geom)
+
+    @classmethod
+    def from_mosaic_filepaths(cls, filepaths):
+        file_register_dict = dict()
+        file_register_dict['filepath'] = filepaths
+        file_register_dict['driver_id'] = [None] * len(filepaths)
+
+        geom_ids = []
+        layer_ids = []
+        tiles = []
+        tile_idx = 1
+        for filepath in filepaths:
+            with GeoTiffDriver(filepath, 'r') as gt_driver:
+                sref_wkt = gt_driver.sref_wkt
+                geotrans = gt_driver.geotrans
+                n_rows, n_cols = gt_driver.shape
+            curr_tile = Tile(n_rows, n_cols, sref=SpatialRef(sref_wkt), geotrans=geotrans, name=tile_idx)
+            curr_tile_idx = None
+            for tile in tiles:
+                if curr_tile == tile:
+                    curr_tile_idx = tile.name
+                    break
+            if curr_tile_idx is None:
+                tiles.append(curr_tile)
+                curr_tile_idx = tile_idx
+                tile_idx += 1
+
+            geom_ids.append(curr_tile_idx)
+            layer_id = sum(np.array(geom_ids) == curr_tile_idx)
+            layer_ids.append(layer_id)
+
+        file_register_dict['geom_id'] = geom_ids
+        file_register_dict['layer_id'] = layer_ids
+        file_register = pd.DataFrame(file_register_dict)
+
+        mosaic_geom = MosaicGeometry(tiles, check_consistency=False)
+
+        return cls(file_register, mosaic_geom)
+
+    def select_xy(self, x, y, sref=None, inplace=True):
+        return super().select_xy(x, y, sref=sref, inplace=inplace, child_class=GeoTiffData)
+
+    def select_bbox(self, bbox, sref=None, inplace=True):
+        return super().select_xy(x, y, sref=sref, inplace=inplace, child_class=GeoTiffData)
+
+    def select_polygon(self, polygon, sref=None, apply_mask=True, inplace=True):
+        return super().select_polygon(polygon, sref=sref, apply_mask=apply_mask, inplace=inplace, child_class=GeoTiffData)
 
 
 def read_vrt_stack(geom_id):
@@ -520,7 +410,3 @@ def read_vrt_stack(geom_id):
         shm_rar, shm_ar_shape = shm_map[band]
         shm_data = np.frombuffer(shm_rar, dtype=np_dtype).reshape(shm_ar_shape)
         shm_data[stack_idxs, min_row:max_row + 1, min_col:max_col + 1] = band_data
-
-
-if __name__ == '__main__':
-    pass
