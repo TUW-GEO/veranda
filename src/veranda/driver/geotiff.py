@@ -3,44 +3,34 @@ import numpy as np
 import xml.etree.ElementTree as ET
 from osgeo import gdal
 
-_numpy2gdal_dtype = {"bool": 1,
-                     "uint8": 1,
-                     "int8": 1,
-                     "uint16": 2,
-                     "int16": 3,
-                     "uint32": 4,
-                     "int32": 5,
-                     "float32": 6,
-                     "float64": 7,
-                     "complex64": 10,
-                     "complex128": 11}
+NUMPY_TO_GDAL_DTYPE = {"bool": gdal.GDT_Byte,
+                       "uint8": gdal.GDT_Byte,
+                       "int8": gdal.GDT_Byte,
+                       "uint16": gdal.GDT_UInt16,
+                       "int16": gdal.GDT_Int16,
+                       "uint32": gdal.GDT_UInt32,
+                       "int32": gdal.GDT_Int32,
+                       "float32": gdal.GDT_Float32,
+                       "float64": gdal.GDT_Float64,
+                       "complex64": gdal.GDT_CFloat32,
+                       "complex128": gdal.GDT_CFloat64}
 
-gdal_dtype = {"uint8": gdal.GDT_Byte,
-              "int16": gdal.GDT_Int16,
-              "int32": gdal.GDT_Int32,
-              "uint16": gdal.GDT_UInt16,
-              "uint32": gdal.GDT_UInt32,
-              "float32": gdal.GDT_Float32,
-              "float64": gdal.GDT_Float64,
-              "complex64": gdal.GDT_CFloat32,
-              "complex128": gdal.GDT_CFloat64}
-
-r_gdal_dtype = {gdal.GDT_Byte: "byte",
-                gdal.GDT_Int16: "int16",
-                gdal.GDT_Int32: "int32",
-                gdal.GDT_UInt16: "uint16",
-                gdal.GDT_UInt32: "uint32",
-                gdal.GDT_Float32: "float32",
-                gdal.GDT_Float64: "float64",
-                gdal.GDT_CFloat32: "cfloat32",
-                gdal.GDT_CFloat64: "cfloat64"}
+GDAL_TO_NUMPY_DTYPE = {gdal.GDT_Byte: "uint8",
+                       gdal.GDT_Int16: "int16",
+                       gdal.GDT_Int32: "int32",
+                       gdal.GDT_UInt16: "uint16",
+                       gdal.GDT_UInt32: "uint32",
+                       gdal.GDT_Float32: "float32",
+                       gdal.GDT_Float64: "float64",
+                       gdal.GDT_CFloat32: "cfloat32",
+                       gdal.GDT_CFloat64: "cfloat64"}
 
 
 # TODO: align no data values to be of type integer
 class GeoTiffDriver:
     def __init__(self, filepath, mode='r', geotrans=(0, 1, 0, 0, 0, 1), sref_wkt=None, shape=(1, 1), compression='LZW',
-                 metadata=None, is_bigtiff=False, is_tiled=True, blocksizes=((512,512), ), overwrite=False,
-                 bands=(1,), scale_factors=(1,), offsets=(0,), nodatavals=(255,), np_dtypes=('uint8',),
+                 metadata=None, is_bigtiff=False, is_tiled=True, blocksize=(512, 512), overwrite=False,
+                 bands=(1,), scale_factors=(1,), offsets=(0,), nodatavals=(255,), dtypes=('uint8',),
                  auto_decode=False):
 
         self.src = None
@@ -54,7 +44,7 @@ class GeoTiffDriver:
         self.metadata = dict() if metadata is None else metadata
         self.is_bigtiff = is_bigtiff
         self.is_tiled = is_tiled
-        self.blocksizes = blocksizes
+        self.blocksize = blocksize
         self.overwrite = overwrite
         self.auto_decode = auto_decode
 
@@ -62,7 +52,7 @@ class GeoTiffDriver:
         self.scale_factors = scale_factors
         self.offsets = offsets
         self.nodatavals = nodatavals
-        self.dtypes = tuple([_numpy2gdal_dtype[np_dtype] for np_dtype in np_dtypes])
+        self._dtypes = tuple([NUMPY_TO_GDAL_DTYPE[dtype] for dtype in dtypes])
 
         self._open()
 
@@ -71,8 +61,8 @@ class GeoTiffDriver:
         return len(self.bands)
 
     @property
-    def dtype_names(self):
-        return [gdal.GetDataTypeName(dtype) for dtype in self.dtypes]
+    def dtypes(self):
+        return [GDAL_TO_NUMPY_DTYPE[dtype] for dtype in self._dtypes]
 
     def _open(self):
 
@@ -85,6 +75,7 @@ class GeoTiffDriver:
             self.geotrans = self.src.GetGeoTransform()
             self.sref_wkt = self.src.GetProjection()
             self.metadata = self.src.GetMetadata()
+            self.blocksize = self.src.GetRasterBand(1).GetBlockSize()  # block seems to be band-independent, because no set function is available per band
             self.compression = ...
             self.is_bigtiff = ...
             self.is_tiled = ...
@@ -93,15 +84,13 @@ class GeoTiffDriver:
             self.scale_factors = []
             self.offsets = []
             self.nodatavals = []
-            self.dtypes = []
-            self.blocksizes = []
+            self._dtypes = []
             for band in range(1, self.src.RasterCount + 1):
                 self.bands.append(band)
                 self.scale_factors.append(self.src.GetRasterBand(band).GetScale())
                 self.offsets.append(self.src.GetRasterBand(band).GetOffset())
                 self.nodatavals.append(self.src.GetRasterBand(band).GetNoDataValue())
-                self.dtypes.append(self.src.GetRasterBand(band).DataType)
-                self.blocksizes.append(self.src.GetRasterBand(band).GetBlockSize())
+                self._dtypes.append(self.src.GetRasterBand(band).DataType)
         elif self.mode == 'w':
             if os.path.exists(self.filepath):
                 if self.overwrite:
@@ -113,11 +102,11 @@ class GeoTiffDriver:
             gdal_opt = dict()
             gdal_opt['COMPRESS'] = self.compression
             gdal_opt['TILED'] = 'YES' if self.is_tiled else 'NO'
-            gdal_opt['BLOCKXSIZE'] = str(self.blocksizes[0][0])
-            gdal_opt['BLOCKYSIZE'] = str(self.blocksizes[0][1])
+            gdal_opt['BLOCKXSIZE'] = str(self.blocksize[0])
+            gdal_opt['BLOCKYSIZE'] = str(self.blocksize[1])
             gdal_opt = ['='.join((k, v)) for k, v in gdal_opt.items()]
             self.src = self._driver.Create(self.filepath, self.shape[1], self.shape[0],
-                                           self.n_bands, self.dtypes[0],
+                                           self.n_bands, NUMPY_TO_GDAL_DTYPE[self.dtypes[0]],
                                            options=gdal_opt)
 
             self.src.SetGeoTransform(self.geotrans)
@@ -185,9 +174,8 @@ class GeoTiffDriver:
             else:
                 if decoder is not None:
                     dtype = self.dtypes[band_idx]
-                    np_dtype = r_gdal_dtype[dtype]
-                    band_data = decoder(band_data, nodataval=nodataval, band=band, scale_factor=scale_factor, offset=offset,
-                                   dtype=np_dtype, **decoder_kwargs)
+                    band_data = decoder(band_data, nodataval=nodataval, band=band, scale_factor=scale_factor,
+                                        offset=offset, dtype=dtype, **decoder_kwargs)
             data[band] = band_data
 
         return data
@@ -209,13 +197,12 @@ class GeoTiffDriver:
             offset = self.offsets[band - 1]
             if encoder is not None:
                 dtype = self.dtypes[band - 1]
-                np_dtype = r_gdal_dtype[dtype]
                 self.src.GetRasterBand(band).WriteArray(encoder(data[band, ...],
                                                         band=band,
                                                         nodataval=nodataval,
                                                         scale_factor=scale_factor,
                                                         offset=offset,
-                                                        dtype=np_dtype,
+                                                        dtype=dtype,
                                                         **encoder_kwargs),
                                                         xoff=col, yoff=row)
             else:
@@ -262,8 +249,8 @@ def create_vrt_file(filepaths, vrt_filepath, shape, sref_wkt, geotrans, bands=(1
             band_attr_dict['nodataval'].append(gt_driver.nodatavals[b_idx])
             band_attr_dict['scale_factor'].append(gt_driver.scale_factors[b_idx])
             band_attr_dict['offset'].append(gt_driver.offsets[b_idx])
-            band_attr_dict['dtype'].append(gt_driver.dtype_names[b_idx])
-            band_attr_dict['blocksize'].append(gt_driver.blocksizes[b_idx])
+            band_attr_dict['dtype'].append(gdal.GetDataTypeName(NUMPY_TO_GDAL_DTYPE[gt_driver.dtypes[b_idx]]))
+            band_attr_dict['blocksize'].append(gt_driver.blocksize)
 
     attrib = {"rasterXSize": str(n_cols), "rasterYSize": str(n_rows)}
     vrt_root = ET.Element("VRTDataset", attrib=attrib)
