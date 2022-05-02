@@ -575,6 +575,10 @@ class RasterDataWriter(RasterData):
         mosaic : geospade.raster.MosaicGeometry
             Mosaic representing the spatial allocation of the given files. The tiles of the mosaic have to match the
             ID's/names of the 'tile_id' column.
+        data : xr.Dataset, optional
+            Raster data stored in memory. It must match the spatial sampling and CRS of the mosaic, but not its spatial
+            extent or tiling. Moreover, the dimension of the data along the first dimension (stack/file dimension), must
+            match the entries/filepaths in `file_register`.
         file_dimension : str, optional
             Dimension/column name of the dimension, where to stack the files along (first axis), e.g. time, bands etc.
             Defaults to 'layer_id', i.e. the layer ID's are used as the main coordinates to stack the files.
@@ -607,7 +611,7 @@ class RasterDataWriter(RasterData):
     @abc.abstractmethod
     def export(self, apply_tiling=False, encoder=None, encoder_kwargs=None, overwrite=False, **kwargs):
         """
-        Writes all of the internally stored data to disk.
+        Writes all the internally stored data to disk.
 
         Parameters
         ----------

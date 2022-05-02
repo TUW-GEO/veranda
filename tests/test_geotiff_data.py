@@ -5,7 +5,7 @@ from osgeo import ogr
 from shapely.geometry import Polygon
 from geospade.crs import SpatialRef
 
-from veranda.data.raster.geotiff import GeoTiffDataReader, GeoTiffDataWriter
+from veranda.raster.data.geotiff import GeoTiffDataReader, GeoTiffDataWriter
 
 
 def create_geotiff_data():

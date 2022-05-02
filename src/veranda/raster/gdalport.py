@@ -1,45 +1,38 @@
-# Copyright (c) 2017, Vienna University of Technology (TU Wien), Department
-# of Geodesy and Geoinformation (GEO).
-# All rights reserved.
-#
-# All information contained herein is, and remains the property of Vienna
-# University of Technology (TU Wien), Department of Geodesy and Geoinformation
-# (GEO). The intellectual and technical concepts contained herein are
-# proprietary to Vienna University of Technology (TU Wien), Department of
-# Geodesy and Geoinformation (GEO). Dissemination of this information or
-# reproduction of this material is forbidden unless prior written permission
-# is obtained from Vienna University of Technology (TU Wien), Department of
-# Geodesy and Geoinformation (GEO).
-
-
 """
-A sample class and Some handy functions for using gdal library to read/write
-data.
+Some handy functions using GDAL to manage geospatial raster data.
+
 """
 
 import os
 import subprocess
-from itertools import cycle
 
-import numpy as np
 from osgeo import gdal
-from osgeo import ogr
-from osgeo import osr
 from osgeo.gdalconst import GA_Update
 
-gdal_datatype = {"uint8": gdal.GDT_Byte,
-                 "int16": gdal.GDT_Int16,
-                 "int32": gdal.GDT_Int32,
-                 "uint16": gdal.GDT_UInt16,
-                 "uint32": gdal.GDT_UInt32,
-                 "float32": gdal.GDT_Float32,
-                 "float64": gdal.GDT_Float64,
-                 "complex64": gdal.GDT_CFloat32,
-                 "complex128": gdal.GDT_CFloat64
-                 }
 
+NUMPY_TO_GDAL_DTYPE = {"bool": gdal.GDT_Byte,
+                       "uint8": gdal.GDT_Byte,
+                       "int8": gdal.GDT_Byte,
+                       "uint16": gdal.GDT_UInt16,
+                       "int16": gdal.GDT_Int16,
+                       "uint32": gdal.GDT_UInt32,
+                       "int32": gdal.GDT_Int32,
+                       "float32": gdal.GDT_Float32,
+                       "float64": gdal.GDT_Float64,
+                       "complex64": gdal.GDT_CFloat32,
+                       "complex128": gdal.GDT_CFloat64}
 
-gdal_resample_type = {"nearst": gdal.GRA_NearestNeighbour,
+GDAL_TO_NUMPY_DTYPE = {gdal.GDT_Byte: "uint8",
+                       gdal.GDT_Int16: "int16",
+                       gdal.GDT_Int32: "int32",
+                       gdal.GDT_UInt16: "uint16",
+                       gdal.GDT_UInt32: "uint32",
+                       gdal.GDT_Float32: "float32",
+                       gdal.GDT_Float64: "float64",
+                       gdal.GDT_CFloat32: "cfloat32",
+                       gdal.GDT_CFloat64: "cfloat64"}
+
+GDAL_RESAMPLE_TYPE = {"nearst": gdal.GRA_NearestNeighbour,
                       "bilinear": gdal.GRA_Bilinear,
                       "cubic": gdal.GRA_Cubic,
                       "cubicspline": gdal.GRA_CubicSpline,
@@ -51,7 +44,7 @@ gdal_resample_type = {"nearst": gdal.GRA_NearestNeighbour,
 
 def dtype_np2gdal(datatype):
     """
-    Get gdal data type from datatype.
+    Get GDAL data type from NumPy-style datatype.
 
     Parameters
     ----------
@@ -61,15 +54,15 @@ def dtype_np2gdal(datatype):
     Returns
     -------
     gdal_datatype : str
-        Gdal data type
+        Gdal data type.
+
     """
-    datatype = datatype.lower()
-    return gdal_datatype[datatype] if datatype in gdal_datatype else None
+    return NUMPY_TO_GDAL_DTYPE.get(datatype.lower())
 
 
 def rtype_str2gdal(resampling_method):
     """
-    Get gdal resample type from resampling method string
+    Get GDAL resample type from resampling method string.
 
     Parameters
     ----------
@@ -78,92 +71,11 @@ def rtype_str2gdal(resampling_method):
 
     Returns
     -------
-    gdal_resam :
-        Gdal resampling.
+    object :
+        GDAL resampling.
+
     """
-    mthd = resampling_method.lower()
-    return gdal_resample_type[mthd] if mthd in gdal_resample_type else None
-
-
-def create_dataset(filename, datatype, dims, frmt="GTiff", geotransform=None,
-                   projection=None, option=None):
-    """
-    Create GDAL dataset.
-
-    Parameters
-    ----------
-    filename : string
-        full path of output filename
-    datatype : string
-        data type string like numpy's dtpye
-    dims : tuple
-        Dimension of the dataset in the format of (bands, XSize, YSize)
-    frmt :  string
-        The format of output image should be a string that gdal supported
-    geotransform : array like
-        It contains six geotransform parameters
-    projection : string
-        projection definition string
-
-    Returns
-    -------
-    GDAL dataset
-
-    Raise
-    -----
-    IOError
-        if fail to obtain driver with specific format or to create the output
-        dataset
-    """
-    driver = gdal.GetDriverByName(frmt)
-    gdaldatatype = dtype_np2gdal(datatype)
-    if driver is None:
-        raise IOError("cannot get driver for {}".format(frmt))
-    band_count, xsize, ysize = dims
-    if option is None:
-        out_ds = driver.Create(
-            filename, xsize, ysize, band_count, gdaldatatype)
-    else:
-        out_ds = driver.Create(filename, xsize, ysize, band_count,
-                               gdaldatatype, option)
-    if out_ds is None:
-        raise IOError("cannot create file of {}".format(filename))
-    if geotransform is not None:
-        out_ds.SetGeoTransform(geotransform)
-    if projection is not None:
-        out_ds.SetProjection(projection)
-
-    return out_ds
-
-
-def write_geometry(geom, fname, dformat="ESRI Shapefile"):
-    """
-    Write an geometry to a vector file.
-
-    parameters
-    ----------
-    geom : Geometry
-        geometry object
-    fname : string
-        full path of the output file name
-    format : string
-        format name. currently only shape file is supported
-    """
-    drv = ogr.GetDriverByName(dformat)
-    dst_ds = drv.CreateDataSource(fname)
-    srs = geom.GetSpatialReference()
-
-    dst_layer = dst_ds.CreateLayer("out", srs=srs)
-    fd = ogr.FieldDefn('DN', ogr.OFTInteger)
-    dst_layer.CreateField(fd)
-
-    feature = ogr.Feature(dst_layer.GetLayerDefn())
-    feature.SetField("DN", 1)
-    feature.SetGeometry(geom)
-    dst_layer.CreateFeature(feature)
-
-    feature.Destroy()
-    dst_ds.Destroy()
+    return GDAL_RESAMPLE_TYPE.get(resampling_method.lower())
 
 
 def call_gdal_util(util_name, gdal_path=None, src_files=None, dst_file=None,
@@ -193,9 +105,10 @@ def call_gdal_util(util_name, gdal_path=None, src_files=None, dst_file=None,
 
     Returns
     -------
-    succeed :
-
-    output :
+    succeed : bool
+        True if process was successful.
+    output : str
+        Console output.
 
     """
     # define specific options
@@ -205,7 +118,8 @@ def call_gdal_util(util_name, gdal_path=None, src_files=None, dst_file=None,
     if not gdal_path:
         gdal_path = _find_gdal_path()
     if not gdal_path:
-        raise OSError("gdal utility not found in system environment!")
+        err_msg = "GDAL utility not found in system environment!"
+        raise OSError(err_msg)
 
     # prepare the command string
     cmd = []
@@ -284,7 +198,7 @@ def _analyse_gdal_output(output):
 def gen_qlook(src_file, dst_file=None, src_nodata=None, gdal_path=None,
               min_stretch=None, max_stretch=None, resize_factor=('3%', '3%'), ct=None, scale=True,
               output_format="GTiff"):
-    '''
+    """
     Parameters
     ----------
 
@@ -314,10 +228,12 @@ def gen_qlook(src_file, dst_file=None, src_nodata=None, gdal_path=None,
 
     Returns
     -------
-    a tuple of (succeed, output)
-        succeed: results of process as True/False
-        output: cmd output of gdal utility
-    '''
+    succeed : bool
+        True if process was successful.
+    output : str
+        Console output.
+
+    """
 
     output_format = output_format.lower()
     f_ext = {'gtiff': 'tif',
@@ -334,7 +250,6 @@ def gen_qlook(src_file, dst_file=None, src_nodata=None, gdal_path=None,
         dst_file = os.path.join(os.path.dirname(src_file),
                                 os.path.basename(src_file).split('.')[0]
                                 + '_qlook.{}'.format(f_ext[output_format]))
-
 
     # prepare options for gdal_transalte
     options_dict = {'gtiff': {'-of': 'GTiff', '-co': 'COMPRESS=LZW',
@@ -359,12 +274,10 @@ def gen_qlook(src_file, dst_file=None, src_nodata=None, gdal_path=None,
                 options['-scale'] = (min_stretch, max_stretch, 0, 254)
                 options['-a_nodata'] = 255
 
-
     # call gdal_translate to resize input file
     succeed, output = call_gdal_util('gdal_translate', src_files=src_file,
                                      dst_file=dst_file, gdal_path=gdal_path,
                                      options=options)
-
 
     if (output_format == 'gtiff') and (ct is not None):
         # Update quick look image, attach color table this does not so easily

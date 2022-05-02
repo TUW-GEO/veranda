@@ -1,7 +1,6 @@
 import os
 import secrets
 import tempfile
-import rioxarray  # this import is needed as an extension for xarray
 import xarray as xr
 import numpy as np
 import pandas as pd
@@ -14,10 +13,10 @@ from geospade.crs import SpatialRef
 from geospade.raster import Tile
 from geospade.raster import MosaicGeometry
 
-from veranda.driver.geotiff import GeoTiffDriver
-from veranda.driver.geotiff import create_vrt_file
-from veranda.driver.geotiff import GDAL_TO_NUMPY_DTYPE
-from veranda.data.raster.base import RasterDataReader, RasterDataWriter, RasterAccess
+from veranda.raster.driver import GeoTiffDriver
+from veranda.raster.driver import create_vrt_file
+from veranda.raster.driver import GDAL_TO_NUMPY_DTYPE
+from veranda.raster.data.base import RasterDataReader, RasterDataWriter, RasterAccess
 
 PROC_OBJS = {}
 
@@ -111,6 +110,26 @@ class GeoTiffDataReader(RasterDataReader):
 
     @classmethod
     def from_filepaths(cls, filepaths, mosaic_class=MosaicGeometry, mosaic_kwargs=None, tile_kwargs=None):
+        """
+        Creates a `GeoTiffDataReader` instance as one stack of GeoTIFF files.
+
+        Parameters
+        ----------
+        filepaths : list of str
+            List of full system paths to a GeoTIFF file.
+        mosaic_class : geospade.raster.MosaicGeometry, optional
+            Mosaic class used to manage the spatial properties of the file stack. If None, the most generic mosaic will be
+            used by default. The initialised mosaic will only contain one tile.
+        mosaic_kwargs : dict, optional
+            Additional arguments for initialising `mosaic_class`.
+        tile_kwargs : dict, optional
+            Additional arguments for initialising a tile class associated with `mosaic_class`.
+
+        Returns
+        -------
+        GeoTiffDataReader
+
+        """
         mosaic_kwargs = mosaic_kwargs or dict()
         tile_kwargs = tile_kwargs or dict()
 
@@ -119,7 +138,6 @@ class GeoTiffDataReader(RasterDataReader):
         file_register_dict['filepath'] = filepaths
         file_register_dict['geom_id'] = [1] * n_filepaths
         file_register_dict['layer_id'] = list(range(n_filepaths))
-        file_register_dict['driver_id'] = [None] * len(filepaths)
         file_register = pd.DataFrame(file_register_dict)
 
         ref_filepath = filepaths[0]
@@ -136,10 +154,27 @@ class GeoTiffDataReader(RasterDataReader):
 
     @classmethod
     def from_mosaic_filepaths(cls, filepaths, mosaic_class=MosaicGeometry, mosaic_kwargs=None):
+        """
+        Creates a `GeoTiffDataReader` instance as multiple stacks of GeoTIFF files.
+
+        Parameters
+        ----------
+        filepaths : list of str
+            List of full system paths to a GeoTIFF file.
+        mosaic_class : geospade.raster.MosaicGeometry, optional
+            Mosaic class used to manage the spatial properties of the file stacks. If None, the most generic mosaic will be
+            used by default.
+        mosaic_kwargs : dict, optional
+            Additional arguments for initialising `mosaic_class`.
+
+        Returns
+        -------
+        GeoTiffDataReader
+
+        """
         mosaic_kwargs = mosaic_kwargs or dict()
         file_register_dict = dict()
         file_register_dict['filepath'] = filepaths
-        file_register_dict['driver_id'] = [None] * len(filepaths)
 
         geom_ids = []
         layer_ids = []
@@ -174,8 +209,35 @@ class GeoTiffDataReader(RasterDataReader):
 
         return cls(file_register, mosaic_geom)
 
-    def read(self, bands=(1,), engine='vrt', n_cores=1, auto_decode=False, decoder=None, decoder_kwargs=None):
+    def read(self, bands=(1,), band_names=None, engine='vrt', n_cores=1,
+             auto_decode=False, decoder=None, decoder_kwargs=None):
+        """
+        Reads data from disk.
 
+        Parameters
+        ----------
+        bands : tuple, optional
+            The GeoTIFF bands of interest. Defaults to the first band, i.e. (1,).
+        band_names : tuple, optional
+            Names associated with the respective bands of the GeoTIFF files. Defaults to None, i.e. the band numbers
+            will be used as a name.
+        engine : str, optional
+            Engine used in the background to read the data. The following options are available:
+                - 'vrt' : Uses GDAL's VRT format to stack the GeoTIFF files per tile and load them as once. This option
+                          yields good performance if the data is stored locally on one drive. Parallelisation is applied
+                          across tiles.
+                - 'parallel' : Reads file by file, but in a parallelised manner. This option yields good performance if
+                               the data is stored on a distributed file system.
+        n_cores : int, optional
+            Number of cores used to read the data in a parallelised manner (defaults to 1).
+        auto_decode : bool, optional
+            True if data should be decoded according to the information available in its metadata (default).
+        decoder : callable, optional
+            Function allowing to decode data read from disk.
+        decoder_kwargs : dict, optional
+            Keyword arguments for the decoder.
+
+        """
         new_tile = Tile.from_extent(self._mosaic.outer_extent, sref=self._mosaic.sref,
                                     x_pixel_size=self._mosaic.x_pixel_size,
                                     y_pixel_size=self._mosaic.y_pixel_size,
@@ -215,13 +277,32 @@ class GeoTiffDataReader(RasterDataReader):
             data[band] = shm_data
 
         self._data_geom = new_tile
-        self._data = self._to_xarray(data)
+        self._data = self._to_xarray(data, band_names)
         self._add_grid_mapping()
         return self
 
     def __read_vrt_stack(self, access_map, shm_map, n_cores=1,
                          auto_decode=False, decoder=None, decoder_kwargs=None):
+        """
+        Reads GeoTIFF data from a stack of GeoTIFF files by using GDAL's VRT format.
 
+        Parameters
+        ----------
+        access_map : dict
+            Dictionary mapping tile/geometry ID's with `GeoTiffAccess` instances to define the access patterns between
+            the data to load and to assign.
+        shm_map : dict
+            Dictionary mapping band numbers with the respective name of the memory buffer of the shared numpy raw array.
+        n_cores : int, optional
+            Number of cores used to read the data in a parallelised manner (defaults to 1).
+        auto_decode : bool, optional
+            True if data should be decoded according to the information available in its metadata (default).
+        decoder : callable, optional
+            Function allowing to decode data read from disk.
+        decoder_kwargs : dict, optional
+            Keyword arguments for the decoder.
+
+        """
         decoder_kwargs = decoder_kwargs or None
         global_file_register = self._file_register
 
@@ -231,6 +312,26 @@ class GeoTiffDataReader(RasterDataReader):
 
     def __read_parallel(self, access_map, shm_map, n_cores=1,
                         auto_decode=False, decoder=None, decoder_kwargs=None):
+        """
+        Reads GeoTIFF data on a file-by-file basis, in a parallel manner.
+
+        Parameters
+        ----------
+        access_map : dict
+            Dictionary mapping tile/geometry ID's with `GeoTiffAccess` instances to define the access patterns between
+            the data to load and to assign.
+        shm_map : dict
+            Dictionary mapping band numbers with the respective name of the memory buffer of the shared numpy raw array.
+        n_cores : int, optional
+            Number of cores used to read the data in a parallelised manner (defaults to 1).
+        auto_decode : bool, optional
+            True if data should be decoded according to the information available in its metadata (default).
+        decoder : callable, optional
+            Function allowing to decode data read from disk.
+        decoder_kwargs : dict, optional
+            Keyword arguments for the decoder.
+
+        """
         decoder_kwargs = decoder_kwargs or None
         global_file_register = self._file_register
 
@@ -238,7 +339,22 @@ class GeoTiffDataReader(RasterDataReader):
                                                             auto_decode, decoder, decoder_kwargs)) as p:
             p.map(read_single_files, global_file_register.index)
 
-    def _to_xarray(self, data):
+    def _to_xarray(self, data, band_names=None):
+        """
+        Converts data being available as a NumPy array to an xarray dataset.
+
+        Parameters
+        ----------
+        data : dict
+            Dictionary mapping band numbers to GeoTIFF raster data being available as a NumPy array.
+        band_names : list of str, optional
+            Band names associated with the respective band number.
+
+        Returns
+        -------
+        xrds : xr.Dataset
+
+        """
         spatial_dims = ['y', 'x']
         dims = [self._file_dim] + spatial_dims
 
@@ -252,9 +368,11 @@ class GeoTiffDataReader(RasterDataReader):
         coord_dict['y'] = self._data_geom.y_coords
 
         xar_dict = dict()
-        for band in data.keys():
-            xar_dict[band] = xr.DataArray(data[band], coords=coord_dict, dims=dims,
-                                          attrs={'fill_value': self.nodatavals[band-1]})
+        bands = list(data.keys())
+        band_names = band_names or bands
+        for i, band in enumerate(bands):
+            xar_dict[band_names[i]] = xr.DataArray(data[band], coords=coord_dict, dims=dims,
+                                                   attrs={'fill_value': self.nodatavals[band-1]})
 
         xrds = xr.Dataset(data_vars=xar_dict)
 
@@ -262,8 +380,47 @@ class GeoTiffDataReader(RasterDataReader):
 
 
 class GeoTiffDataWriter(RasterDataWriter):
+    """ Allows to write and modify a stack of GeoTIFF data. """
     def __init__(self, mosaic, file_register=None, data=None, file_dimension='layer_id', file_coords=None, dirpath=None,
-                 file_naming_pattern=None):
+                 file_naming_pattern='{layer_id}.tif'):
+        """
+        Constructor of `GeoTiffDataWriter`.
+
+        Parameters
+        ----------
+        mosaic : geospade.raster.MosaicGeometry
+            Mosaic representing the spatial allocation of the given files. The tiles of the mosaic have to match the
+            ID's/names of the 'tile_id' column.
+        file_register : pd.Dataframe, optional
+            Data frame managing a stack/list of files containing the following columns:
+                - 'filepath' : str
+                    Full file path to a geospatial file.
+                - 'layer_id' : int
+                    Specifies an ID to which layer a file belongs to.
+                - 'tile_id' : str or int
+                    Tile name or ID to which tile a file belongs to.
+            If it is none, then it will be created from the information stored in `data`, `dirpath`, and
+            `file_name_pattern`.
+        data : xr.Dataset, optional
+            Raster data stored in memory. It must match the spatial sampling and CRS of the mosaic, but not its spatial
+            extent or tiling. Moreover, the dimension of the data along the first dimension (stack/file dimension), must
+            match the entries/filepaths in `file_register`.
+        file_dimension : str, optional
+            Dimension/column name of the dimension, where to stack the files along (first axis), e.g. time, bands etc.
+            Defaults to 'layer_id', i.e. the layer ID's are used as the main coordinates to stack the files.
+        file_coords : list, optional
+            Additional columns of `file_register` to use as coordinates. Defaults to None, i.e. only coordinates along
+            `file_dimension` are used.
+        dirpath : str, optional
+            Directory path to the folder where the GeoTIFF files should be written to. Defaults to none, i.e. the
+            current working directory is used.
+        file_naming_pattern : str, optional
+            Pattern for the filename of the new GeoTIFF files. To fill in specific parts of the new file name with
+            information from the file register, you can specify the respective file register column names in curly
+            brackets and add them to the pattern string as desired. Defaults to '{layer_id}.tif'.
+
+        """
+
         if file_register is None and data is None:
             err_msg = "Either a file register ('file_register') or an xarray dataset ('data') has to be provided."
             raise ValueError(err_msg)
@@ -292,6 +449,21 @@ class GeoTiffDataWriter(RasterDataWriter):
         super().__init__(file_register, mosaic, data=data, file_dimension=file_dimension, file_coords=file_coords)
 
     def write(self, data, encoder=None, encoder_kwargs=None, overwrite=False, **kwargs):
+        """
+        Writes a certain chunk of data to disk.
+
+        Parameters
+        ----------
+        data : xr.Dataset
+            Data chunk to be written to disk or being appended to existing data.
+        encoder : callable, optional
+            Function allowing to encode data before writing it to disk.
+        encoder_kwargs : dict, optional
+            Keyword arguments for the encoder.
+        overwrite : bool, optional
+            True if data should be overwritten, false if not (default).
+
+        """
         data_geom = self.raster_geom_from_data(data)
 
         bands = list(data.data_vars)
@@ -331,6 +503,22 @@ class GeoTiffDataWriter(RasterDataWriter):
                             encoder=encoder, encoder_kwargs=encoder_kwargs)
 
     def export(self, apply_tiling=False, encoder=None, encoder_kwargs=None, overwrite=False, **kwargs):
+        """
+        Writes all the internally stored data to disk.
+
+        Parameters
+        ----------
+        apply_tiling : bool, optional
+            True if the internal data should be tiled according to the mosaic.
+            False if the internal data composes a new tile and should not be tiled (default).
+        encoder : callable, optional
+            Function allowing to encode data before writing it to disk.
+        encoder_kwargs : dict, optional
+            Keyword arguments for the encoder.
+        overwrite : bool, optional
+            True if data should be overwritten, false if not (default).
+
+        """
         bands = list(self._data.data_vars)
         nodatavals = []
         scale_factors = []
@@ -356,6 +544,16 @@ class GeoTiffDataWriter(RasterDataWriter):
 
 
 def read_vrt_stack(geom_id):
+    """
+    Function being responsible to create a new VRT file from a stack of GeoTIFF files, read data from this files, and
+    assign it to a shared memory array. This function is meant to be executed in parallel on different cores.
+
+    Parameters
+    ----------
+    geom_id : str or int
+        Tile/geometry ID coming from the Pool's mapping function.
+
+    """
     global_file_register = PROC_OBJS['global_file_register']
     access_map = PROC_OBJS['access_map']
     shm_map = PROC_OBJS['shm_map']
@@ -403,6 +601,17 @@ def read_vrt_stack(geom_id):
 
 
 def read_single_files(file_idx):
+    """
+    Function being responsible to read data from a single GeoTIFF file and assign it to a shared memory array.
+    This function is meant to be executed in parallel on different cores.
+
+    Parameters
+    ----------
+    file_idx : any
+        Index value to access a specific row of the file register. The actual value should come from the Pool's
+        mapping function.
+
+    """
     global_file_register = PROC_OBJS['global_file_register']
     access_map = PROC_OBJS['access_map']
     shm_map = PROC_OBJS['shm_map']

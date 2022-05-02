@@ -12,17 +12,16 @@
 # Geodesy and Geoinformation (GEO).
 
 """
-Test read/write of gdalport.
+Test operations in the `gdalport` module.
 """
 
 import os
 import unittest
-from tempfile import mkdtemp
 
 import numpy as np
 
-from veranda.io.gdalport import call_gdal_util
-from veranda.io.geotiff import GeoTiffFile
+from veranda.raster.gdalport import call_gdal_util
+from veranda.raster.driver.geotiff import GeoTiffDriver
 
 
 class GdalportTest(unittest.TestCase):
@@ -40,7 +39,7 @@ class GdalportTest(unittest.TestCase):
         self.filename_gdal_trans = os.path.join(test_dir, 'test_gdal_trans.tif')
 
     def test_gdal_translate(self):
-        with GeoTiffFile(self.filename, mode='w') as gt_file:
+        with GeoTiffDriver(self.filename, mode='w') as gt_file:
             gt_file.write(self.data)
         # configure options
         options = {'-of': 'GTiff', '-co': 'COMPRESS=LZW',

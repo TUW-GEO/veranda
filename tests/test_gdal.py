@@ -1,21 +1,7 @@
-# Copyright (c) 2017, Vienna University of Technology (TU Wien), Department
-# of Geodesy and Geoinformation (GEO).
-# All rights reserved.
-#
-# All information contained herein is, and remains the property of Vienna
-# University of Technology (TU Wien), Department of Geodesy and Geoinformation
-# (GEO). The intellectual and technical concepts contained herein are
-# proprietary to Vienna University of Technology (TU Wien), Department of
-# Geodesy and Geoinformation (GEO). Dissemination of this information or
-# reproduction of this material is forbidden unless prior written permission
-# is obtained from Vienna University of Technology (TU Wien), Department of
-# Geodesy and Geoinformation (GEO).
-
 """
-Test read/write of gdalport.
+Test GDAL utility.
 """
 
-import os
 import unittest
 from osgeo import ogr, osr
 
