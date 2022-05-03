@@ -321,10 +321,6 @@ class GeoTiffDriver:
             self.shape = data_shape
             self._open()
 
-        if data_shape != self.shape:
-            err_msg = f"Shape mismatch: Data ({data_shape[0]},{data_shape[1]}) vs. GeoTIFF ({self.shape[0]},{self.shape[1]})"
-            raise ValueError(err_msg)
-
         bands = bands or self.bands
         n_bands = len(bands)
         n_data_layers = data.shape[0]

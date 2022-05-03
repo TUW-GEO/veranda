@@ -1,89 +1,159 @@
 import os
-import glob
+import shutil
+import unittest
+import numpy as np
 import pandas as pd
-from osgeo import ogr
-from shapely.geometry import Polygon
+import xarray as xr
 from geospade.crs import SpatialRef
+from geospade.raster import Tile
+from geospade.raster import MosaicGeometry
 
 from veranda.raster.data.geotiff import GeoTiffDataReader, GeoTiffDataWriter
 
 
-def create_geotiff_data():
-    subgrid_dirpath = r"D:\data\code\yeoda\2021_11_29__rq_workshop\data\Sentinel-1_CSAR\IWGRDH\parameters\datasets\par\B0104\EQUI7_EU010M"
-    filepaths_E041N022T1 = glob.glob(os.path.join(subgrid_dirpath, r'E041N022T1\mmensig0\*VV*.tif'))
-    filepaths_E041N021T1 = glob.glob(os.path.join(subgrid_dirpath, r'E041N021T1\mmensig0\*VV*.tif'))
-    filepaths = filepaths_E041N021T1 + filepaths_E041N022T1
-    gt_data = GeoTiffDataReader.from_mosaic_filepaths(filepaths)
+class GeoTiffDataTest(unittest.TestCase):
 
-    return gt_data
+    """
+    Testing a GeoTIFF image stack.
+    """
 
+    def setUp(self):
+        """
+        Set up dummy data set.
+        """
+        self.path = test_dir = os.path.join(os.path.dirname(
+            os.path.abspath(__file__)), 'temp')
+        if not os.path.isdir(test_dir):
+            os.makedirs(self.path)
 
-def test_from_filepaths():
-    assert True
+    def test_write_read_image_stack(self):
+        """
+        Test writing and reading an image stack.
+        """
+        num_files = 50
+        xsize = 60
+        ysize = 50
+        band_name = 'data'
 
+        ds_tile = Tile(ysize, xsize, SpatialRef(4326))
+        ds_mosaic = MosaicGeometry.from_tile_list([ds_tile])
 
-def test_from_mosaic_filepaths():
-    gt_data = create_geotiff_data()
-    assert True
+        dims = ['time', 'y', 'x']
+        coords = {'time': pd.date_range('2000-01-01', periods=num_files),
+                  'y': ds_tile.y_coords,
+                  'x': ds_tile.x_coords}
+        data = np.random.randn(num_files, ysize, xsize)
+        ds = xr.Dataset({band_name: (dims, data)}, coords=coords)
 
+        with GeoTiffDataWriter(ds_mosaic, data=ds, file_dimension='time', dirpath=self.path) as gt_data:
+            gt_data.export()
+            filepaths = gt_data.file_register['filepath']
 
-def test_ts_reading_from_polygon():
-    polygon = Polygon(((50.860565, -0.791828), (51.404334, -0.570728), (50.852763, -0.162861)))
-    polygon = ogr.CreateGeometryFromWkt(polygon.wkt)
-    gt_data = create_geotiff_data()
-    #gt_data._mosaic.plot(show=True, label_tiles=True)
-    gt_data.select_polygon(polygon, sref=SpatialRef(4326))
-    #gt_data._mosaic.plot(show=True, label_tiles=True)
-    gt_data.read(n_cores=2)
-    gt_data_ts = gt_data.select_xy(4147303, 2190252, inplace=False)
-    gt_data_ts.load()
-    gt_data_ts.data
-    assert True
+        with GeoTiffDataReader.from_filepaths(filepaths) as gt_data:
+            ts1 = gt_data.select_px_window(0, 0, width=10, height=10, inplace=False)
+            ts1.read(band_names=(band_name,))
+            ts2 = gt_data.select_px_window(10, 12, width=5, height=5, inplace=False)
+            ts2.read(band_names=(band_name,))
 
+        self.assertEqual(ts1.data[band_name].shape, (num_files, 10, 10))
+        np.testing.assert_equal(ts1.data[band_name], data[:, :10, :10])
 
-def test_export():
-    polygon = Polygon(((50.860565, -0.791828), (51.404334, -0.570728), (50.852763, -0.162861)))
-    polygon = ogr.CreateGeometryFromWkt(polygon.wkt)
-    gt_data = create_geotiff_data()
-    gt_data.select_polygon(polygon, sref=SpatialRef(4326))
-    gt_data.read(n_cores=2)
+        self.assertEqual(ts2.data[band_name].shape, (num_files, 5, 5))
+        np.testing.assert_equal(ts2.data[band_name], data[:, 10:15, 12:17])
 
-    out_dirpath = r'D:\data\tmp\veranda\export_test'
-    naming_pattern = "{layer_id}_{geom_id}.tif"
-    out_gt_data = GeoTiffDataWriter(gt_data.mosaic, data=gt_data.data, dirpath=out_dirpath,
-                                    file_naming_pattern=naming_pattern)
-    out_gt_data.export()
+    def test_read_decoded_image_stack(self):
+        """
+        Tests reading and decoding of an image stack.
 
+        """
+        num_files = 25
+        xsize = 60
+        ysize = 50
 
-def test_write():
-    polygon = Polygon(((50.860565, -0.791828), (51.404334, -0.570728), (50.852763, -0.162861)))
-    polygon = ogr.CreateGeometryFromWkt(polygon.wkt)
-    gt_data = create_geotiff_data()
-    gt_data.select_polygon(polygon, sref=SpatialRef(4326))
-    gt_data.read(n_cores=2)
+        ds_tile = Tile(ysize, xsize, SpatialRef(4326))
+        ds_mosaic = MosaicGeometry.from_tile_list([ds_tile])
 
-    n_rows = len(gt_data.data.y)
-    data_1 = gt_data.data.sel(y=slice(None, gt_data.data.y.data[int(n_rows/3)]))
-    data_2 = gt_data.data.sel(y=slice(gt_data.data.y.data[int(2*n_rows / 3)], None))
+        dims = ['time', 'y', 'x']
+        coords = {'time': pd.date_range('2000-01-01', periods=num_files),
+                  'y': ds_tile.y_coords,
+                  'x': ds_tile.x_coords}
+        data = np.ones((num_files, ysize, xsize))
+        attr1 = {'unit': 'dB', 'scale_factor': 2, 'add_offset': 3, 'fill_value': -9999}
+        attr2 = {'unit': 'dB', 'fill_value': -9999}
+        ds = xr.Dataset({'data1': (dims, data, attr1), 'data2': (dims, data, attr2)}, coords=coords)
 
-    out_dirpath = r'D:\data\tmp\veranda\write_test'
-    file_register_dict = dict()
-    layer_ids = list(range(1, gt_data.n_layers + 1))
-    out_filepaths = [os.path.join(out_dirpath, f"{layer_id}.tif") for layer_id in layer_ids]
-    file_register_dict['filepath'] = out_filepaths
-    file_register_dict['geom_id'] = [1] * len(out_filepaths)
-    file_register_dict['layer_id'] = layer_ids
-    out_file_register = pd.DataFrame(file_register_dict)
-    gt_data.data_geom.name = 1
-    with GeoTiffDataWriter(out_file_register, gt_data.mosaic.from_tile_list([gt_data.data_geom], check_consistency=False)) as out_gt_data:
-        out_gt_data.write(data_1)
-        out_gt_data.write(data_2)
+        with GeoTiffDataWriter(ds_mosaic, data=ds, file_dimension='time', dirpath=self.path) as gt_data:
+            gt_data.export()
+            filepaths = gt_data.file_register['filepath']
+
+        with GeoTiffDataReader.from_filepaths(filepaths) as gt_data:
+            ts1 = gt_data.select_px_window(0, 0, width=10, height=10, inplace=False)
+            ts1.read(bands=(1, 2), band_names=('data1', 'data2'), auto_decode=True)
+            ts2 = gt_data.select_px_window(10, 12, width=5, height=5, inplace=False)
+            ts2.read(bands=(1, 2), band_names=('data1', 'data2'), auto_decode=True)
+            np.testing.assert_equal(ts1.data['data2'], data[:, :10, :10])
+            np.testing.assert_equal(ts2.data['data2'], data[:, 10:15, 12:17])
+
+        with GeoTiffDataReader.from_filepaths(filepaths) as gt_data:
+            ts1 = gt_data.select_px_window(0, 0, width=10, height=10, inplace=False)
+            ts1.read(bands=(1, 2), band_names=('data1', 'data2'), auto_decode=False)
+            ts2 = gt_data.select_px_window(10, 12, width=5, height=5, inplace=False)
+            ts2.read(bands=(1, 2), band_names=('data1', 'data2'), auto_decode=False)
+            np.testing.assert_equal(ts1.data['data1'], data[:, :10, :10])
+            np.testing.assert_equal(ts2.data['data1'], data[:, 10:15, 12:17])
+
+        data = data * 2. + 3.
+        with GeoTiffDataReader.from_filepaths(filepaths) as gt_data:
+            ts1 = gt_data.select_px_window(0, 0, width=10, height=10, inplace=False)
+            ts1.read(bands=(1, 2), band_names=('data1', 'data2'), auto_decode=True)
+            ts2 = gt_data.select_px_window(10, 12, width=5, height=5, inplace=False)
+            ts2.read(bands=(1, 2), band_names=('data1', 'data2'), auto_decode=True)
+            np.testing.assert_equal(ts1.data['data1'], data[:, :10, :10])
+            np.testing.assert_equal(ts2.data['data1'], data[:, 10:15, 12:17])
+
+    def test_write_selections(self):
+        """ Tests writing data after some select operations have been applied. """
+        num_files = 10
+        xsize = 60
+        ysize = 50
+        layer_ids = [0, 5, 9]
+
+        ds_tile = Tile(ysize, xsize, SpatialRef(4326), name=0)
+        ds_mosaic = MosaicGeometry.from_tile_list([ds_tile])
+
+        dims = ['time', 'y', 'x']
+        coords = {'time': pd.date_range('2000-01-01', periods=num_files),
+                  'y': ds_tile.y_coords,
+                  'x': ds_tile.x_coords}
+        data = np.random.randn(num_files, ysize, xsize)
+        ds = xr.Dataset({'data': (dims, data)}, coords=coords)
+
+        with GeoTiffDataWriter(ds_mosaic, data=ds, file_dimension='time', dirpath=self.path) as gt_data:
+            gt_data.select_layers(layer_ids, inplace=True)
+            ul_data = gt_data.select_px_window(0, 0, height=25, width=30)
+            ur_data = gt_data.select_px_window(0, 30, height=25, width=30)
+            ll_data = gt_data.select_px_window(25, 0, height=25, width=30)
+            lr_data = gt_data.select_px_window(25, 30, height=25, width=30)
+            gt_data.write(ul_data.data)
+            gt_data.write(ur_data.data)
+            gt_data.write(ll_data.data)
+            gt_data.write(lr_data.data)
+            filepaths = gt_data.file_register['filepath']
+
+        with GeoTiffDataReader.from_filepaths(filepaths) as gt_data:
+            ts1 = gt_data.select_px_window(0, 0, width=10, height=10, inplace=False)
+            ts1.read(band_names=('data',))
+            ts2 = gt_data.select_px_window(45, 55, width=5, height=5, inplace=False)
+            ts2.read(band_names=('data',))
+            np.testing.assert_equal(ts1.data['data'], data[layer_ids, :10, :10])
+            np.testing.assert_equal(ts2.data['data'], data[layer_ids, 45:, 55:])
+
+    def tearDown(self):
+        """
+        Remove test file.
+        """
+        shutil.rmtree(self.path)
 
 
 if __name__ == '__main__':
-    import matplotlib
-
-    matplotlib.use('Qt5Agg')
-    #test_ts_reading_from_polygon()
-    test_export()
-    #test_write()
+    pass

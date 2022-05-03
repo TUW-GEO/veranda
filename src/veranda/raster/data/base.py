@@ -105,7 +105,7 @@ class RasterData(metaclass=abc.ABCMeta):
         self._drivers = dict()
         self._mosaic = mosaic
         self._data = data
-        self._data_geom = None if data is None else self.raster_geom_from_data(data)
+        self._data_geom = None if data is None else self.raster_geom_from_data(data, sref=mosaic.sref)
         self._file_dim = file_dimension
         self._file_coords = [self._file_dim] if file_coords is None else file_coords
 
@@ -125,7 +125,7 @@ class RasterData(metaclass=abc.ABCMeta):
     @property
     def n_layers(self):
         """ int : Number of layers. """
-        return max(self._file_register['layer_id'])
+        return max(self._file_register['layer_id']) + 1
 
     @property
     def n_tiles(self):
@@ -164,7 +164,7 @@ class RasterData(metaclass=abc.ABCMeta):
         pass
 
     @staticmethod
-    def raster_geom_from_data(data, **kwargs):
+    def raster_geom_from_data(data, sref=None, **kwargs):
         """
         Creates a raster geometry from an xarray dataset.
 
@@ -172,6 +172,8 @@ class RasterData(metaclass=abc.ABCMeta):
         ----------
         data : xr.Dataset
             Raster data.
+        sref : geospade.crs.SpatialRef, optional
+            CRS of the data if not given under the 'spatial_ref' variable.
 
         Returns
         -------
@@ -179,11 +181,16 @@ class RasterData(metaclass=abc.ABCMeta):
             Raster geometry representing the spatial extent of the xarray dataset.
 
         """
-        sref_wkt = data.spatial_ref.attrs.get('spatial_ref')
+        ds_sref = data.get('spatial_ref')
+        if ds_sref is None and sref is None:
+            err_msg = "Neither the data contains CRS information nor the keyword"
+            raise ValueError(err_msg)
+        if ds_sref is not None:
+            sref = SpatialRef(ds_sref.attrs.get('spatial_ref'))
         x_pixel_size = data.x.data[1] - data.x.data[0]
         y_pixel_size = data.y.data[0] - data.y.data[1]
         extent = [data.x.data[0], data.y.data[-1] - y_pixel_size, data.x.data[-1] + x_pixel_size, data.y.data[0]]
-        raster_geom = RasterGeometry.from_extent(extent, SpatialRef(sref_wkt),
+        raster_geom = RasterGeometry.from_extent(extent, sref,
                                                  x_pixel_size=x_pixel_size, y_pixel_size=y_pixel_size, **kwargs)
         return raster_geom
 
@@ -198,7 +205,7 @@ class RasterData(metaclass=abc.ABCMeta):
                 dar = self._data[dvar]
                 self._data[dvar] = dar.where(dar != dar.attrs['fill_value'])
 
-    def select(self, cmds, inplace=True):
+    def select(self, cmds, inplace=False):
         """
         Executes several select operations from a dict/JSON compatible set of commands.
 
@@ -207,8 +214,8 @@ class RasterData(metaclass=abc.ABCMeta):
         cmds : list of 2-tuple
 
         inplace : bool, optional
-            If true, the current raster data object is modified (default).
-            If false, a new raster data instance will be returned.
+            If true, the current raster data object is modified.
+            If false, a new raster data instance will be returned (default).
 
         Returns
         -------
@@ -234,7 +241,7 @@ class RasterData(metaclass=abc.ABCMeta):
 
         return self
 
-    def select_tiles(self, tile_names, inplace=True):
+    def select_tiles(self, tile_names, inplace=False):
         """
         Selects a certain tile from a raster data object.
 
@@ -243,8 +250,8 @@ class RasterData(metaclass=abc.ABCMeta):
         tile_names : list of str or int
             Tile names/IDs.
         inplace : bool, optional
-            If true, the current raster data object is modified (default).
-            If false, a new raster data instance will be returned.
+            If true, the current raster data object is modified.
+            If false, a new raster data instance will be returned (default).
 
         Returns
         -------
@@ -261,7 +268,7 @@ class RasterData(metaclass=abc.ABCMeta):
 
         return self
 
-    def select_layers(self, layer_ids, inplace=True):
+    def select_layers(self, layer_ids, inplace=False):
         """
         Selects layers according to the given layer IDs.
 
@@ -270,8 +277,8 @@ class RasterData(metaclass=abc.ABCMeta):
         layer_ids : list
             Layer IDs to select.
         inplace : bool, optional
-            If true, the current raster data object is modified (default).
-            If false, a new raster data instance will be returned.
+            If true, the current raster data object is modified.
+            If false, a new raster data instance will be returned (default).
 
         Returns
         -------
@@ -283,11 +290,61 @@ class RasterData(metaclass=abc.ABCMeta):
             new_raster_data = copy.deepcopy(self)
             return new_raster_data.select_layers(layer_ids, inplace=True)
 
-        self.close(layer_ids=layer_ids)
+        layer_ids_close = set(self._file_register['layer_id']) - set(layer_ids)
+        self.close(layer_ids=layer_ids_close, clear_ram=False)
         self._file_register = self._file_register[self._file_register['layer_id'].isin(layer_ids)]
+
         return self
 
-    def select_xy(self, x, y, sref=None, inplace=True):
+    def select_px_window(self, row, col, height=1, width=1, inplace=False):
+        """
+        Selects the pixel coordinates according to the given pixel window.
+
+        Parameters
+        ----------
+        row : int
+            Top-left row number of the pixel window anchor.
+        col : int
+            Top-left column number of the pixel window anchor.
+        height : int, optional
+            Number of rows/height of the pixel window.
+        width : int, optional
+            Number of columns/width of the pixel window.
+        inplace : bool, optional
+            If true, the current raster data object is modified.
+            If false, a new raster data instance will be returned (default).
+
+        Returns
+        -------
+        RasterData :
+            Raster data object a mosaic and a data geometry only consisting of the intersected tile with the
+            pixel window.
+
+        Notes
+        -----
+        The mosaic will be only sliced if it consists of one tile to prevent ambiguities in terms of the definition
+        of the pixel window.
+
+        """
+        if not inplace:
+            new_raster_data = copy.deepcopy(self)
+            return new_raster_data.select_px_window(row, col, height=height, width=width, inplace=True)
+
+        if self._data_geom is not None:
+            self._data_geom.slice_by_rc(row, col, height=height, width=width, inplace=True, name=0)
+            if self._data_geom is None:
+                wrn_msg = "Pixels are outside the extent of the raster data."
+                warnings.warn(wrn_msg)
+
+        if len(self._mosaic.all_tiles) == 1:
+            tile_oi = self._mosaic.all_tiles[0]
+            tile_oi.slice_by_rc(row, col, height=height, width=width, inplace=True, name=0)
+            tile_oi.active = True
+            self._mosaic.from_tile_list([tile_oi], inplace=True)
+
+        return self
+
+    def select_xy(self, x, y, sref=None, inplace=False):
         """
         Selects tile and pixel coordinates according to the given coordinate tuple.
 
@@ -300,8 +357,8 @@ class RasterData(metaclass=abc.ABCMeta):
         sref : geospade.crs.SpatialRef
             CRS of the given coordinate tuple.
         inplace : bool, optional
-            If true, the current raster data object is modified (default).
-            If false, a new raster data instance will be returned.
+            If true, the current raster data object is modified.
+            If false, a new raster data instance will be returned (default).
 
         Returns
         -------
@@ -316,7 +373,7 @@ class RasterData(metaclass=abc.ABCMeta):
 
         if self._data_geom is not None:
             row, col = self._data_geom.xy2rc(x, y, sref=sref)
-            self._data_geom.slice_by_rc(row, col, inplace=True, name=1)
+            self._data_geom.slice_by_rc(row, col, inplace=True, name=0)
             if self._data_geom is None:
                 wrn_msg = "Coordinates are outside the spatial extent of the raster data."
                 warnings.warn(wrn_msg)
@@ -324,7 +381,7 @@ class RasterData(metaclass=abc.ABCMeta):
         tile_oi = self._mosaic.xy2tile(x, y, sref=sref)
         if tile_oi is not None:
             row, col = tile_oi.xy2rc(x, y, sref=sref)
-            tile_oi.slice_by_rc(row, col, inplace=True, name=1)
+            tile_oi.slice_by_rc(row, col, inplace=True, name=0)
             tile_oi.active = True
             self._mosaic.from_tile_list([tile_oi], inplace=True)
             self._file_register = self._file_register[self._file_register['geom_id'] == tile_oi.parent_root.name]
@@ -335,7 +392,7 @@ class RasterData(metaclass=abc.ABCMeta):
 
         return self
 
-    def select_bbox(self, bbox, sref=None, inplace=True):
+    def select_bbox(self, bbox, sref=None, inplace=False):
         """
         Selects tile and pixel coordinates according to the given bounding box.
 
@@ -346,8 +403,8 @@ class RasterData(metaclass=abc.ABCMeta):
         sref : geospade.crs.SpatialRef
             CRS of the given bounding box coordinates.
         inplace : bool, optional
-            If true, the current raster data object is modified (default).
-            If false, a new raster data instance will be returned.
+            If true, the current raster data object is modified.
+            If false, a new raster data instance will be returned (default).
 
         Returns
         -------
@@ -361,7 +418,7 @@ class RasterData(metaclass=abc.ABCMeta):
         ogr_geom = any_geom2ogr_geom(bbox, sref=sref)
         return self.select_polygon(ogr_geom, apply_mask=False, inplace=inplace)
 
-    def select_polygon(self, polygon, sref=None, apply_mask=True, inplace=True):
+    def select_polygon(self, polygon, sref=None, apply_mask=True, inplace=False):
         """
         Selects tile and pixel coordinates according to the given polygon.
 
@@ -375,8 +432,8 @@ class RasterData(metaclass=abc.ABCMeta):
             True if pixels outside the polygon should be set to a no data value (default).
             False if every pixel withing the bounding box of the polygon should be included.
         inplace : bool, optional
-            If true, the current raster data object is modified (default).
-            If false, a new raster data instance will be returned.
+            If true, the current raster data object is modified.
+            If false, a new raster data instance will be returned (default).
 
         Returns
         -------
@@ -446,9 +503,9 @@ class RasterData(metaclass=abc.ABCMeta):
         """
         if layer_ids is not None:
             bool_idxs = self._file_register['layer_id'].isin(layer_ids)
-            other_bool_idxs = ~bool_idxs
-            self._file_register.at[other_bool_idxs, 'driver_id'] = None
-            driver_ids = list(set(self._file_register.at[bool_idxs, 'driver_id']))
+            driver_ids = set(self._file_register.loc[bool_idxs, 'driver_id'])
+            self._file_register.loc[bool_idxs, 'driver_id'] = None
+            driver_ids = list(set(self._drivers.keys()) - driver_ids)
         else:
             self._file_register['driver_id'] = None
             driver_ids = list(self._drivers.keys())

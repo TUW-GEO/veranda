@@ -13,9 +13,9 @@ from geospade.crs import SpatialRef
 from geospade.raster import Tile
 from geospade.raster import MosaicGeometry
 
-from veranda.raster.driver import GeoTiffDriver
-from veranda.raster.driver import create_vrt_file
-from veranda.raster.driver import GDAL_TO_NUMPY_DTYPE
+from veranda.raster.driver.geotiff import GeoTiffDriver
+from veranda.raster.driver.geotiff import create_vrt_file
+from veranda.raster.gdalport import GDAL_TO_NUMPY_DTYPE
 from veranda.raster.data.base import RasterDataReader, RasterDataWriter, RasterAccess
 
 PROC_OBJS = {}
@@ -136,7 +136,7 @@ class GeoTiffDataReader(RasterDataReader):
         n_filepaths = len(filepaths)
         file_register_dict = dict()
         file_register_dict['filepath'] = filepaths
-        file_register_dict['geom_id'] = [1] * n_filepaths
+        file_register_dict['geom_id'] = [0] * n_filepaths
         file_register_dict['layer_id'] = list(range(n_filepaths))
         file_register = pd.DataFrame(file_register_dict)
 
@@ -179,7 +179,7 @@ class GeoTiffDataReader(RasterDataReader):
         geom_ids = []
         layer_ids = []
         tiles = []
-        tile_idx = 1
+        tile_idx = 0
         tile_class = mosaic_class.get_tile_class()
         for filepath in filepaths:
             with GeoTiffDriver(filepath, 'r') as gt_driver:
@@ -241,7 +241,7 @@ class GeoTiffDataReader(RasterDataReader):
         new_tile = Tile.from_extent(self._mosaic.outer_extent, sref=self._mosaic.sref,
                                     x_pixel_size=self._mosaic.x_pixel_size,
                                     y_pixel_size=self._mosaic.y_pixel_size,
-                                    name=1)
+                                    name=0)
         shm_map = dict()
         for band in bands:
             np_dtype = np.dtype(self.dtypes[band - 1])
@@ -259,7 +259,7 @@ class GeoTiffDataReader(RasterDataReader):
         for tile in self._mosaic.tiles:
             gt_access = GeoTiffAccess(tile, new_tile)
             data_mask[gt_access.dst_row_slice, gt_access.dst_col_slice] = tile.mask
-            access_map[tile.parent_root.name] = gt_access
+            access_map[tile.name] = gt_access
 
         if engine == 'vrt':
             self.__read_vrt_stack(access_map, shm_map, n_cores, auto_decode, decoder, decoder_kwargs)
@@ -361,7 +361,7 @@ class GeoTiffDataReader(RasterDataReader):
         coord_dict = dict()
         for coord in self._file_coords:
             if coord == 'layer_id':
-                coord_dict[coord] = range(1, self.n_layers + 1)
+                coord_dict[coord] = range(0, self.n_layers)
             else:
                 coord_dict[coord] = self._file_register[coord]
         coord_dict['x'] = self._data_geom.x_coords
@@ -432,6 +432,9 @@ class GeoTiffDataWriter(RasterDataWriter):
             file_register_dict['layer_id'] = layer_ids
             file_register = pd.DataFrame(file_register_dict)
 
+        if data is not None and file_dimension not in file_register:
+            file_register[file_dimension] = data[file_dimension]
+
         n_entries = len(file_register)
         if 'layer_id' not in file_register.columns:
             layer_ids = range(n_entries)
@@ -464,23 +467,25 @@ class GeoTiffDataWriter(RasterDataWriter):
             True if data should be overwritten, false if not (default).
 
         """
-        data_geom = self.raster_geom_from_data(data)
+        data_geom = self.raster_geom_from_data(data, sref=self.mosaic.sref)
 
-        bands = list(data.data_vars)
+        band_names = list(data.data_vars)
         nodatavals = []
         scale_factors = []
         offsets = []
         dtypes = []
-        for band in bands:
-            nodatavals.append(data[band].attrs.get('fill_value', 0))
-            scale_factors.append(data[band].attrs.get('scale_factor', 1))
-            offsets.append(data[band].attrs.get('offset', 0))
-            dtypes.append(data[band].data.dtype.name)
+        bands = range(1, len(band_names) + 1)
+        for band_name in band_names:
+            nodatavals.append(data[band_name].attrs.get('fill_value', 0))
+            scale_factors.append(data[band_name].attrs.get('scale_factor', 1))
+            offsets.append(data[band_name].attrs.get('offset', 0))
+            dtypes.append(data[band_name].data.dtype.name)
 
         for i, entry in self._file_register.iterrows():
             filepath = entry['filepath']
             layer_id = entry.get('layer_id')
-            geom_id = entry.get('geom_id', 1)
+            geom_id = entry.get('geom_id', 0)
+            file_coord = entry.get(self._file_dim, layer_id)
             tile = self._mosaic[geom_id]
             if not tile.intersects(data_geom):
                 continue
@@ -496,8 +501,8 @@ class GeoTiffDataWriter(RasterDataWriter):
             gt_driver = self._drivers[driver_id]
             out_tile = data_geom.slice_by_geom(tile, inplace=False)
             gt_access = GeoTiffAccess(out_tile, tile, src_root_raster_geom=data_geom)
-            xrds = data.sel(**{self._file_dim: layer_id})
-            data_write = xrds[bands].to_array().data
+            xrds = data.sel(**{self._file_dim: file_coord})
+            data_write = xrds[band_names].to_array().data
             gt_driver.write(data_write[..., gt_access.src_row_slice, gt_access.src_col_slice], bands,
                             row=gt_access.dst_window[0], col=gt_access.dst_window[1],
                             encoder=encoder, encoder_kwargs=encoder_kwargs)
@@ -519,28 +524,29 @@ class GeoTiffDataWriter(RasterDataWriter):
             True if data should be overwritten, false if not (default).
 
         """
-        bands = list(self._data.data_vars)
+        band_names = list(self._data.data_vars)
         nodatavals = []
         scale_factors = []
         offsets = []
         dtypes = []
-        for band in bands:
+        for band in band_names:
             nodatavals.append(self._data[band].attrs.get('fill_value', 0))
             scale_factors.append(self._data[band].attrs.get('scale_factor', 1))
-            offsets.append(self._data[band].attrs.get('offset', 0))
+            offsets.append(self._data[band].attrs.get('add_offset', 0))
             dtypes.append(self._data[band].data.dtype.name)
 
+        bands = range(1, len(band_names) + 1)
         for i, entry in self._file_register.iterrows():
             filepath = entry['filepath']
             layer_id = entry.get('layer_id')
-            geom_id = entry.get('layer_id', 1)
+            geom_id = entry.get('geom_id', 0)
             tile = self._mosaic[geom_id] if apply_tiling else self._data_geom
 
             with GeoTiffDriver(filepath, mode='w', geotrans=tile.geotrans, sref_wkt=tile.sref.wkt,
                                shape=tile.shape, bands=bands, scale_factors=scale_factors, offsets=offsets,
                                nodatavals=nodatavals, dtypes=dtypes) as gt_driver:
                 xrds = self._data[{self._file_dim: layer_id}]
-                gt_driver.write(xrds[bands].to_array().data, bands, encoder=encoder, encoder_kwargs=encoder_kwargs)
+                gt_driver.write(xrds[band_names].to_array().data, bands, encoder=encoder, encoder_kwargs=encoder_kwargs)
 
 
 def read_vrt_stack(geom_id):
@@ -578,7 +584,7 @@ def read_vrt_stack(geom_id):
 
     src = gdal.Open(vrt_filepath, gdal.GA_ReadOnly)
     vrt_data = src.ReadAsArray(*gt_access.gdal_args)
-    stack_idxs = np.array(layer_ids) - 1
+    stack_idxs = np.array(layer_ids)
     for band in bands:
         band_data = vrt_data[(band - 1)::n_bands, ...]
         scale_factor = src.GetRasterBand(band).GetScale()
