@@ -25,7 +25,7 @@ import xarray as xr
 import netCDF4
 
 from veranda.io.geotiff import GeoTiffFile
-from veranda.io.netcdf import NcFile
+from veranda.raster.driver.netcdf import NcFile
 
 gdal_dtype = {"uint8": gdal.GDT_Byte,
               "int16": gdal.GDT_Int16,

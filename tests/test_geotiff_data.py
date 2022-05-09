@@ -12,7 +12,6 @@ from veranda.raster.data.geotiff import GeoTiffDataReader, GeoTiffDataWriter
 
 
 class GeoTiffDataTest(unittest.TestCase):
-
     """
     Testing a GeoTIFF image stack.
     """

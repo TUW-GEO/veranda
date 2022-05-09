@@ -18,18 +18,17 @@ Test NetCDF I/O.
 import os
 import unittest
 
-import netCDF4
 import numpy as np
 import pandas as pd
 import xarray as xr
 
-from veranda.io.netcdf import NcFile
+from veranda.raster.driver.netcdf import NetCdf4Driver
 
 
-class NcTest(unittest.TestCase):
+class NetCdf4Test(unittest.TestCase):
 
     """
-    Testing read and write for NetCDF files.
+    Testing read and write for NetCDF4 files.
     """
 
     def setUp(self):
@@ -40,7 +39,7 @@ class NcTest(unittest.TestCase):
             os.path.abspath(__file__)), 'temp')
         if not os.path.isdir(test_dir):
             os.makedirs(test_dir)
-        self.filename = os.path.join(test_dir, 'test.nc')
+        self.filepath = os.path.join(test_dir, 'test.nc')
 
     def test_read_write(self):
         """
@@ -50,20 +49,21 @@ class NcTest(unittest.TestCase):
         dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
         attr1 = {'unit': 'dB'}
-        attr2 = {'unit': 'degree', 'fill_value': -9999}
+        attr2 = {'unit': 'degree'}
 
-        self.ds = xr.Dataset({'sig': (dims, data, attr1),
-                              'inc': (dims, data, attr2),
-                              'azi': (dims, data, attr2)}, coords=coords)
+        ds_ref = xr.Dataset({'sig': (dims, data, attr1),
+                             'inc': (dims, data, attr2),
+                             'azi': (dims, data, attr2)}, coords=coords)
 
-        with NcFile(self.filename, mode='w') as nc:
-            nc.write(self.ds)
+        with NetCdf4Driver(self.filepath, mode='w', data_variables=['sig', 'inc', 'azi'],
+                           nodatavals={'inc': -9999, 'azi': -9999}, dtypes={'inc': 'int32', 'azi': 'int32'}) as nc:
+            nc.write(ds_ref)
 
-        with NcFile(self.filename) as nc:
+        with NetCdf4Driver(self.filepath) as nc:
             ds = nc.read()
-            np.testing.assert_array_equal(ds['sig'][:], self.ds['sig'][:])
-            np.testing.assert_array_equal(ds['inc'][:], self.ds['inc'][:])
-            np.testing.assert_array_equal(ds['azi'][:], self.ds['azi'][:])
+            np.testing.assert_array_equal(ds['sig'][:], ds_ref['sig'][:])
+            np.testing.assert_array_equal(ds['inc'][:], ds_ref['inc'][:])
+            np.testing.assert_array_equal(ds['azi'][:], ds_ref['azi'][:])
 
     def test_auto_decoding(self):
         """
@@ -73,39 +73,27 @@ class NcTest(unittest.TestCase):
         dims = ['time', 'x', 'y']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
         attr1 = {'unit': 'dB', 'scale_factor': 2, 'add_offset': 3, 'fill_value': -9999}
-        attr2 = {'unit': 'degree', 'fill_value': -9999, 'scale_factor': 2, 'add_offset': 0}
-        attr3 = {'unit': 'degree', 'fill_value': -9999}
+        attr2 = {'unit': 'degree', '_FillValue': -9999, 'scale_factor': 2, 'add_offset': 0}
+        attr3 = {'unit': 'degree', '_FillValue': -9999}
 
-        self.ds = xr.Dataset({'sig': (dims, data, attr1),
-                              'inc': (dims, data, attr2),
-                              'azi': (dims, data, attr3)}, coords=coords)
+        ds_ref = xr.Dataset({'sig': (dims, data, attr1),
+                             'inc': (dims, data, attr2),
+                             'azi': (dims, data, attr3)}, coords=coords)
 
-        with NcFile(self.filename, mode='w') as nc:
-            nc.write(self.ds)
+        with NetCdf4Driver(self.filepath, mode='w') as nc:
+            nc.write(ds_ref)
 
-        with NcFile(self.filename, mode='r_xarray', auto_decode=False) as nc:
+        with NetCdf4Driver(self.filepath, mode='r', auto_decode=False) as nc:
             ds = nc.read()
-            np.testing.assert_array_equal(ds['sig'][:], self.ds['sig'][:])
-            np.testing.assert_array_equal(ds['inc'][:], self.ds['inc'][:])
-            np.testing.assert_array_equal(ds['azi'][:], self.ds['azi'][:])
+            np.testing.assert_array_equal(ds['sig'][:], ds_ref['sig'][:])
+            np.testing.assert_array_equal(ds['inc'][:], ds_ref['inc'][:])
+            np.testing.assert_array_equal(ds['azi'][:], ds_ref['azi'][:])
 
-        with NcFile(self.filename, mode='r_xarray', auto_decode=True) as nc:
+        with NetCdf4Driver(self.filepath, mode='r', auto_decode=True) as nc:
             ds = nc.read()
-            np.testing.assert_array_equal(ds['sig'][:], self.ds['sig'][:]*2 + 3)
-            np.testing.assert_array_equal(ds['inc'][:], self.ds['inc'][:]*2)
-            np.testing.assert_array_equal(ds['azi'][:], self.ds['azi'][:])
-
-        with NcFile(self.filename, mode='r_netcdf', auto_decode=False) as nc:
-            ds = nc.read()
-            np.testing.assert_array_equal(ds['sig'][:], self.ds['sig'][:])
-            np.testing.assert_array_equal(ds['inc'][:], self.ds['inc'][:])
-            np.testing.assert_array_equal(ds['azi'][:], self.ds['azi'][:])
-
-        with NcFile(self.filename, mode='r_netcdf', auto_decode=True) as nc:
-            ds = nc.read()
-            np.testing.assert_array_equal(ds['sig'][:], self.ds['sig'][:] * 2 + 3)
-            np.testing.assert_array_equal(ds['inc'][:], self.ds['inc'][:] * 2)
-            np.testing.assert_array_equal(ds['azi'][:], self.ds['azi'][:])
+            np.testing.assert_array_equal(ds['sig'][:], ds_ref['sig'][:] * 2 + 3)
+            np.testing.assert_array_equal(ds['inc'][:], ds_ref['inc'][:] * 2)
+            np.testing.assert_array_equal(ds['azi'][:], ds_ref['azi'][:])
 
     def test_append(self):
         """
@@ -115,23 +103,23 @@ class NcTest(unittest.TestCase):
         dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
 
-        self.ds = xr.Dataset({'sig': (dims, data),
-                              'inc': (dims, data)}, coords=coords)
+        ds_ref = xr.Dataset({'sig': (dims, data),
+                             'inc': (dims, data)}, coords=coords)
 
-        with NcFile(self.filename, mode='w') as nc:
-            nc.write(self.ds)
+        with NetCdf4Driver(self.filepath, mode='w') as nc:
+            nc.write(ds_ref)
 
-        with NcFile(self.filename, mode='a') as nc:
-            nc.write(self.ds)
+        with NetCdf4Driver(self.filepath, mode='a') as nc:
+            nc.write(ds_ref)
 
-        with NcFile(self.filename, mode='a') as nc:
-            nc.write(self.ds)
+        with NetCdf4Driver(self.filepath, mode='a') as nc:
+            nc.write(ds_ref)
 
-        with NcFile(self.filename) as nc:
+        with NetCdf4Driver(self.filepath) as nc:
             ds = nc.read()
 
             np.testing.assert_array_equal(
-                ds['sig'][:], np.repeat(self.ds['sig'][:], 3, axis=0))
+                ds['sig'][:], np.repeat(ds_ref['sig'][:], 3, axis=0))
 
     def test_chunksizes(self):
         """
@@ -141,14 +129,14 @@ class NcTest(unittest.TestCase):
         dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
 
-        self.ds = xr.Dataset({'sig': (dims, data),
-                              'inc': (dims, data)}, coords=coords)
+        ds_ref = xr.Dataset({'sig': (dims, data),
+                             'inc': (dims, data)}, coords=coords)
 
         chunksizes = (100, 10, 10)
-        with NcFile(self.filename, mode='w', chunksizes=chunksizes) as nc:
-            nc.write(self.ds)
+        with NetCdf4Driver(self.filepath, mode='w', data_variables=list(ds_ref.data_vars), chunksizes=chunksizes) as nc:
+            nc.write(ds_ref)
 
-        with NcFile(self.filename, mode='r_netcdf') as nc:
+        with NetCdf4Driver(self.filepath, mode='r') as nc:
             ds = nc.read()
             self.assertEqual(ds['sig'].data.chunksize, chunksizes)
             self.assertEqual(ds['inc'].data.chunksize, chunksizes)
@@ -161,22 +149,22 @@ class NcTest(unittest.TestCase):
         dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
 
-        self.ds = xr.Dataset({'sig': (dims, data),
-                              'inc': (dims, data)}, coords=coords)
+        ds_ref = xr.Dataset({'sig': (dims, data),
+                             'inc': (dims, data)}, coords=coords)
 
         size = 1024 * 64
         nelems = 500
         preemption = 0.75
 
         var_chunk_cache = (size, nelems, preemption)
-        with NcFile(self.filename, mode='w',
-                    var_chunk_cache=var_chunk_cache) as nc:
-            nc.write(self.ds)
+        with NetCdf4Driver(self.filepath, mode='w', data_variables=list(ds_ref.data_vars),
+                           var_chunk_caches=var_chunk_cache) as nc:
+            nc.write(ds_ref)
             self.assertEqual(var_chunk_cache,
                              nc.src['sig'].get_var_chunk_cache())
 
-        with NcFile(self.filename, mode='r_netcdf',
-                    var_chunk_cache=var_chunk_cache) as nc:
+        with NetCdf4Driver(self.filepath, mode='r', data_variables=list(ds_ref.data_vars),
+                           var_chunk_caches=var_chunk_cache) as nc:
             self.assertEqual(var_chunk_cache,
                              nc.src['sig'].get_var_chunk_cache())
 
@@ -188,14 +176,14 @@ class NcTest(unittest.TestCase):
         dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
 
-        self.ds = xr.Dataset({'sig': (dims, data),
-                              'inc': (dims, data)}, coords=coords)
+        ds_ref = xr.Dataset({'sig': (dims, data),
+                             'inc': (dims, data)}, coords=coords)
 
         time_units = 'days since 2000-01-01 00:00:00'
-        with NcFile(self.filename, mode='w', time_units=time_units) as nc:
-            nc.write(self.ds)
+        with NetCdf4Driver(self.filepath, mode='w', time_units=time_units) as nc:
+            nc.write(ds_ref)
 
-        with NcFile(self.filename, time_units=time_units) as nc:
+        with NetCdf4Driver(self.filepath, time_units=time_units) as nc:
             ds = nc.read()
             np.testing.assert_array_equal(pd.DatetimeIndex(ds['time'].data),
                                           coords['time'])
@@ -210,14 +198,14 @@ class NcTest(unittest.TestCase):
         dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
 
-        self.ds = xr.Dataset({'sig': (dims, data),
+        ref_ds = xr.Dataset({'sig': (dims, data),
                               'inc': (dims, data)}, coords=coords)
 
         geotrans = (3000000.0, 500.0, 0.0, 1800000.0, 0.0, -500.0)
-        with NcFile(self.filename, mode='w', geotrans=geotrans) as nc:
-            nc.write(self.ds)
+        with NetCdf4Driver(self.filepath, mode='w', geotrans=geotrans) as nc:
+            nc.write(ref_ds)
 
-        with NcFile(self.filename) as nc:
+        with NetCdf4Driver(self.filepath) as nc:
             ds = nc.read()
 
         x = geotrans[0] + (0.5 + np.arange(xdim)) * geotrans[1] + \
@@ -232,7 +220,7 @@ class NcTest(unittest.TestCase):
         """
         Remove test file.
         """
-        os.remove(self.filename)
+        os.remove(self.filepath)
 
 
 if __name__ == '__main__':

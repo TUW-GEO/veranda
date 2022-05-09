@@ -470,16 +470,17 @@ class GeoTiffDataWriter(RasterDataWriter):
         data_geom = self.raster_geom_from_data(data, sref=self.mosaic.sref)
 
         band_names = list(data.data_vars)
-        nodatavals = []
-        scale_factors = []
-        offsets = []
-        dtypes = []
-        bands = range(1, len(band_names) + 1)
-        for band_name in band_names:
-            nodatavals.append(data[band_name].attrs.get('fill_value', 0))
-            scale_factors.append(data[band_name].attrs.get('scale_factor', 1))
-            offsets.append(data[band_name].attrs.get('offset', 0))
-            dtypes.append(data[band_name].data.dtype.name)
+        n_bands = len(band_names)
+        bands = range(1, n_bands + 1)
+        nodatavals = dict()
+        scale_factors = dict()
+        offsets = dict()
+        dtypes = dict()
+        for i, band_name in enumerate(band_names):
+            dtypes[i + 1] = self._data[band_name].data.dtype.name
+            nodatavals[i + 1] = self._data[band_name].attrs.get('_FillValue', 0)
+            scale_factors[i + 1] = self._data[band_name].attrs.get('scale_factor', 1)
+            offsets[i + 1] = self._data[band_name].attrs.get('add_offset', 0)
 
         for i, entry in self._file_register.iterrows():
             filepath = entry['filepath']
@@ -492,8 +493,8 @@ class GeoTiffDataWriter(RasterDataWriter):
             driver_id = entry.get('driver_id', None)
             if driver_id is None:
                 gt_driver = GeoTiffDriver(filepath, mode='w', geotrans=tile.geotrans, sref_wkt=tile.sref.wkt,
-                                          shape=tile.shape, bands=bands, scale_factors=scale_factors, offsets=offsets,
-                                          nodatavals=nodatavals, dtypes=dtypes)
+                                          shape=tile.shape, n_bands=n_bands, dtypes=dtypes, scale_factors=scale_factors,
+                                          offsets=offsets, nodatavals=nodatavals)
                 driver_id = len(list(self._drivers.keys())) + 1
                 self._drivers[driver_id] = gt_driver
                 self._file_register.loc[i, 'driver_id'] = driver_id
@@ -503,7 +504,7 @@ class GeoTiffDataWriter(RasterDataWriter):
             gt_access = GeoTiffAccess(out_tile, tile, src_root_raster_geom=data_geom)
             xrds = data.sel(**{self._file_dim: file_coord})
             data_write = xrds[band_names].to_array().data
-            gt_driver.write(data_write[..., gt_access.src_row_slice, gt_access.src_col_slice], bands,
+            gt_driver.write(data_write[..., gt_access.src_row_slice, gt_access.src_col_slice],
                             row=gt_access.dst_window[0], col=gt_access.dst_window[1],
                             encoder=encoder, encoder_kwargs=encoder_kwargs)
 
@@ -525,17 +526,18 @@ class GeoTiffDataWriter(RasterDataWriter):
 
         """
         band_names = list(self._data.data_vars)
-        nodatavals = []
-        scale_factors = []
-        offsets = []
-        dtypes = []
-        for band in band_names:
-            nodatavals.append(self._data[band].attrs.get('fill_value', 0))
-            scale_factors.append(self._data[band].attrs.get('scale_factor', 1))
-            offsets.append(self._data[band].attrs.get('add_offset', 0))
-            dtypes.append(self._data[band].data.dtype.name)
+        nodatavals = dict()
+        scale_factors = dict()
+        offsets = dict()
+        dtypes = dict()
+        for i, band_name in enumerate(band_names):
+            dtypes[i + 1] = self._data[band_name].data.dtype.name
+            nodatavals[i + 1] = self._data[band_name].attrs.get('_FillValue', 0)
+            scale_factors[i + 1] = self._data[band_name].attrs.get('scale_factor', 1)
+            offsets[i + 1] = self._data[band_name].attrs.get('add_offset', 0)
 
         bands = range(1, len(band_names) + 1)
+        n_bands = len(bands)
         for i, entry in self._file_register.iterrows():
             filepath = entry['filepath']
             layer_id = entry.get('layer_id')
@@ -543,10 +545,10 @@ class GeoTiffDataWriter(RasterDataWriter):
             tile = self._mosaic[geom_id] if apply_tiling else self._data_geom
 
             with GeoTiffDriver(filepath, mode='w', geotrans=tile.geotrans, sref_wkt=tile.sref.wkt,
-                               shape=tile.shape, bands=bands, scale_factors=scale_factors, offsets=offsets,
-                               nodatavals=nodatavals, dtypes=dtypes) as gt_driver:
+                               shape=tile.shape, n_bands=n_bands, dtypes=dtypes, scale_factors=scale_factors,
+                               offsets=offsets, nodatavals=nodatavals) as gt_driver:
                 xrds = self._data[{self._file_dim: layer_id}]
-                gt_driver.write(xrds[band_names].to_array().data, bands, encoder=encoder, encoder_kwargs=encoder_kwargs)
+                gt_driver.write(xrds[band_names].to_array().data, encoder=encoder, encoder_kwargs=encoder_kwargs)
 
 
 def read_vrt_stack(geom_id):

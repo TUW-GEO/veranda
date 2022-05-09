@@ -38,12 +38,12 @@ class GeoTiffDriverTest(unittest.TestCase):
         """
         data = np.ones((5, 100, 100), dtype=np.float32)
 
-        with GeoTiffDriver(self.filepath, mode='w', bands=tuple(range(1, data.shape[0] + 1))) as src:
+        with GeoTiffDriver(self.filepath, mode='w', n_bands=5) as src:
             src.write(data)
 
         with GeoTiffDriver(self.filepath) as src:
             for band in np.arange(data.shape[0]):
-                ds = src.read(bands=(band + 1,))
+                ds = src.read(bands=band + 1)
                 np.testing.assert_array_equal(
                     ds[band + 1], data[band, :, :])
 
@@ -53,28 +53,29 @@ class GeoTiffDriverTest(unittest.TestCase):
 
         """
         data = np.ones((5, 100, 100), dtype=np.float32)
-
-        with GeoTiffDriver(self.filepath, mode='w', bands=tuple(range(1, data.shape[0] + 1)),
-                           scale_factors=[1, 2, 1, 1, 3], offsets=[0, 3, 0, 0, 0]) as src:
+        scale_factors = {1: 1, 2: 2, 3: 1, 4: 1, 5: 3}
+        offsets = {2: 3}
+        with GeoTiffDriver(self.filepath, mode='w', n_bands=5,
+                           scale_factors=scale_factors, offsets=offsets) as src:
             src.write(data)
 
         with GeoTiffDriver(self.filepath, auto_decode=False) as src:
-            ds = src.read(bands=(1,))
+            ds = src.read(bands=1)
             np.testing.assert_array_equal(ds[1], data[0, :, :])
-            ds = src.read(bands=(2,))
+            ds = src.read(bands=2)
             np.testing.assert_array_equal(ds[2], data[1, :, :])
-            ds = src.read(bands=(5,))
+            ds = src.read(bands=5)
             np.testing.assert_array_equal(ds[5], data[4, :, :])
 
         data[1, :, :] = data[1, :, :] * 2 + 3
         data[4, :, :] = data[4, :, :] * 3
 
         with GeoTiffDriver(self.filepath, auto_decode=True) as src:
-            ds = src.read(bands=(1,))
+            ds = src.read(bands=1)
             np.testing.assert_array_equal(ds[1], data[0, :, :])
-            ds = src.read(bands=(2,))
+            ds = src.read(bands=2)
             np.testing.assert_array_equal(ds[2], data[1, :, :])
-            ds = src.read(bands=(5,))
+            ds = src.read(bands=5)
             np.testing.assert_array_equal(ds[5], data[4, :, :])
 
     def test_read_write_specific_band(self):
@@ -83,14 +84,14 @@ class GeoTiffDriverTest(unittest.TestCase):
         """
         data = np.ones((100, 100), dtype=np.float32)
 
-        with GeoTiffDriver(self.filepath, mode='w', bands=(5, 10)) as src:
-            src.write(data, bands=(5,))
-            src.write(data, bands=(10,))
+        with GeoTiffDriver(self.filepath, mode='w', n_bands=10) as src:
+            src.write({5: data})
+            src.write({10: data})
 
         with GeoTiffDriver(self.filepath) as src:
-            ds = src.read(bands=(5,))
+            ds = src.read(bands=5)
             np.testing.assert_array_equal(ds[5], data)
-            ds = src.read(bands=(10,))
+            ds = src.read(bands=10)
             np.testing.assert_array_equal(ds[10], data)
 
     def test_metadata(self):

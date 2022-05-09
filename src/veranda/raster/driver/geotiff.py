@@ -9,10 +9,10 @@ from veranda.raster.gdalport import NUMPY_TO_GDAL_DTYPE, GDAL_TO_NUMPY_DTYPE
 
 class GeoTiffDriver:
     """ GDAL wrapper for reading and writing GeoTIFF files. """
-    def __init__(self, filepath, mode='r', geotrans=(0, 1, 0, 0, 0, 1), sref_wkt=None, shape=None, compression='LZW',
-                 metadata=None, is_bigtiff=False, is_tiled=True, blocksize=(512, 512), overwrite=False,
-                 bands=(1,), scale_factors=(1,), offsets=(0,), nodatavals=(255,), dtypes=('uint8',),
-                 color_tbls=(None,), color_intprs=(None,), auto_decode=False):
+    def __init__(self, filepath, mode='r', geotrans=(0, 1, 0, 0, 0, 1), sref_wkt=None, shape=None,
+                 compression='LZW', metadata=None, is_bigtiff=False, is_tiled=True, blocksize=(512, 512),
+                 n_bands=1,  dtypes='uint8', scale_factors=1, offsets=0, nodatavals=255, color_tbls=None,
+                 color_intprs=None, overwrite=False, auto_decode=False):
         """
         Constructor of `GeoTiffDriver`.
 
@@ -48,22 +48,28 @@ class GeoTiffDriver:
             True if the data should be tiled (default). False if the data should be stripped.
         blocksize : 2-tuple, optional
             Blocksize of the data blocks in the GeoTIFF file. Defaults to (512, 512).
+        n_bands : int, optional
+            Number of bands in the GeoTIFF file. Defaults to 1.
+        dtypes : dict or str, optional
+            Data types used for de- or encoding (NumPy-style). Defaults to 'uint8'. It can either be one value (will
+            be used for all bands), or a dictionary mapping the band number with the respective data type.
+        scale_factors : dict or number, optional
+            Scale factor used for de- or encoding. Defaults to 1. It can either be one value (will be used for all
+            bands), or a dictionary mapping the band number with the respective scale factor.
+        offsets : dict or number, optional
+            Offset used for de- or encoding. Defaults to 0. It can either be one value (will be used for all bands),
+            or a dictionary mapping the band number with the respective offset.
+        nodatavals : dict or int, optional
+            No data value used for de- or encoding. Defaults to 255. It can either be one value (will be used for all
+            bands), or a dictionary mapping the band number with the respective no data value.
+        color_tbls : dict or gdal.ColorTable, optional
+            GDAL color tables. Defaults to None. It can either be one value (will be used for all bands), or a
+            dictionary mapping the band number with the respective color table.
+        color_intprs : dict or gdal.ColorInterp, optional
+            GDAL color interpretation value. Defaults to None. It can either be one value (will be used for all bands),
+            or a dictionary mapping the band number with the respective color interpretation value.
         overwrite : bool, optional
             Flag if the file can be overwritten if it already exists (defaults to false).
-        bands : tuple, optional
-            Band numbers of the GeoTIFF file. Defaults to (1, ).
-        scale_factors : tuple, optional
-            Scale factor used for de- or encoding. Defaults to (1, ).
-        offsets : tuple, optional
-            Offset values used for de- or encoding. Defaults to (0, ).
-        nodatavals : tuple, optional
-            No data values used for de- or encoding. Defaults to (255, ).
-        dtypes : tuple, optional
-            Data types used for de- or encoding (NumPy-style). Defaults to ('uint8',).
-        color_tbls : tuple, optional
-
-        color_intprs : tuple, optional
-
         auto_decode : bool, optional
             True if data should be decoded according to the information available in its metadata.
             False if not (default).
@@ -83,21 +89,27 @@ class GeoTiffDriver:
         self.blocksize = blocksize
         self.overwrite = overwrite
         self.auto_decode = auto_decode
-        self.bands = bands
+        self.bands = list(range(1, n_bands + 1))
 
+        dtypes = self.__to_dict(dtypes)
+        scale_factors = self.__to_dict(scale_factors)
+        offsets = self.__to_dict(offsets)
+        nodatavals = self.__to_dict(nodatavals)
+        color_tbls = self.__to_dict(color_tbls)
+        color_intprs = self.__to_dict(color_intprs)
         self._scale_factors = dict()
         self._offsets = dict()
         self._nodatavals = dict()
         self._color_tbls = dict()
         self._color_intprs = dict()
         self._dtypes = dict()
-        for i, band in enumerate(bands):
-            self._scale_factors[band] = scale_factors[i] if i < len(scale_factors) else scale_factors[0]
-            self._offsets[band] = offsets[i] if i < len(offsets) else offsets[0]
-            self._nodatavals[band] = nodatavals[i] if i < len(nodatavals) else nodatavals[0]
-            self._color_tbls[band] = color_tbls[i] if i < len(color_tbls) else color_tbls[0]
-            self._color_intprs[band] = color_intprs[i] if i < len(color_intprs) else color_intprs[0]
-            self._dtypes[band] = NUMPY_TO_GDAL_DTYPE[dtypes[i]] if i < len(dtypes) else NUMPY_TO_GDAL_DTYPE[dtypes[0]]
+        for band in self.bands:
+            self._dtypes[band] = NUMPY_TO_GDAL_DTYPE[dtypes.get(band, 'uint8')]
+            self._scale_factors[band] = scale_factors.get(band, 1)
+            self._offsets[band] = offsets.get(band, 0)
+            self._nodatavals[band] = nodatavals.get(band, 255)
+            self._color_tbls[band] = color_tbls.get(band, None)
+            self._color_intprs[band] = color_intprs.get(band, None)
 
         if shape is not None or self.mode == 'r':
             self._open()
@@ -212,7 +224,7 @@ class GeoTiffDriver:
             gdal_opt['BIGTIFF'] = 'YES' if self.is_bigtiff else 'NO'
             gdal_opt = ['='.join((k, v)) for k, v in gdal_opt.items()]
             self.src = self._driver.Create(self.filepath, self.shape[1], self.shape[0],
-                                           max(self.bands), NUMPY_TO_GDAL_DTYPE[self.dtypes[0]],
+                                           self.n_bands, NUMPY_TO_GDAL_DTYPE[self.dtypes[0]],
                                            options=gdal_opt)
 
             self.src.SetGeoTransform(self.geotrans)
@@ -222,9 +234,11 @@ class GeoTiffDriver:
             if self.metadata is not None:
                 self.src.SetMetadata(self.metadata)
 
-            # set fill value for each band to the given no data values
             for band in self.bands:
                 self.src.GetRasterBand(band).Fill(int(self._nodatavals[band]))
+                self.src.GetRasterBand(band).SetNoDataValue(float(self._nodatavals[band]))
+                self.src.GetRasterBand(band).SetScale(self._scale_factors[band])
+                self.src.GetRasterBand(band).SetOffset(self._offsets[band])
         else:
             err_msg = f"Mode '{self.mode}' not known."
             raise ValueError(err_msg)
@@ -247,7 +261,7 @@ class GeoTiffDriver:
             Number of rows to read (default is 1).
         n_cols : int, optional
             Number of columns to read (default is 1).
-        bands : tuple, optional
+        bands : int or tuple or list, optional
             Band numbers of the GeoTIFF file to read data from. Defaults to none, i.e. all available bands will be
             used.
         decoder : function, optional
@@ -266,6 +280,7 @@ class GeoTiffDriver:
         n_cols = self.shape[1] if n_cols is None else n_cols
         n_rows = self.shape[0] if n_rows is None else n_rows
         bands = bands or self.bands
+        bands = self.__to_iterable(bands)
 
         data = dict()
         for band in bands:
@@ -287,17 +302,15 @@ class GeoTiffDriver:
 
         return data
 
-    def write(self, data, bands=None, row=0, col=0, encoder=None, encoder_kwargs=None):
+    def write(self, data, row=0, col=0, encoder=None, encoder_kwargs=None):
         """
         Writes data to a GeoTIFF file.
 
         Parameters
         ----------
-        data : np.array
-            3D NumPy array with stacked band data.
-        bands : tuple, optional
-            Band numbers of the GeoTIFF file to read data from. Defaults to none, i.e. all available bands will be
-            used.
+        data : dict of np.array or np.array
+            Dictionary mapping band numbers with a 2D NumPy array or 3D numpy array, where the first dimension must
+            correspond to the number of bands.
         row : int, optional
             Offset row number/index (defaults to 0).
         col : int, optional
@@ -313,28 +326,26 @@ class GeoTiffDriver:
             raise IOError(err_msg)
 
         encoder_kwargs = encoder_kwargs or dict()
-        if data.ndim == 2:
-            data = data[None, ...]
+        if not isinstance(data, dict):
+            data_write = dict()
+            for i, band in enumerate(self.bands):
+                data_write[band] = data[i, ...]
+        else:
+            data_write = data
 
-        data_shape = data.shape[1:]
+        data_bands = list(data_write.keys())
+        data_shape = data_write[data_bands[0]].shape
         if self.src is None:
             self.shape = data_shape
             self._open()
 
-        bands = bands or self.bands
-        n_bands = len(bands)
-        n_data_layers = data.shape[0]
-        if n_data_layers != n_bands:
-            err_msg = f"Number data layers and number of bands do not match: {n_data_layers} != {n_bands}"
-            raise ValueError(err_msg)
-
-        for i, band in enumerate(bands):
+        for band in data_bands:
             nodataval = self._nodatavals[band]
             scale_factor = self._scale_factors[band]
             offset = self._offsets[band]
             if encoder is not None:
                 dtype = GDAL_TO_NUMPY_DTYPE(self._dtypes[band])
-                self.src.GetRasterBand(band).WriteArray(encoder(data[i, ...],
+                self.src.GetRasterBand(band).WriteArray(encoder(data_write[band],
                                                         band=band,
                                                         nodataval=nodataval,
                                                         scale_factor=scale_factor,
@@ -343,10 +354,53 @@ class GeoTiffDriver:
                                                         **encoder_kwargs),
                                                         xoff=col, yoff=row)
             else:
-                self.src.GetRasterBand(band).WriteArray(data[i, ...], xoff=col, yoff=row)
-            self.src.GetRasterBand(band).SetNoDataValue(float(nodataval))
-            self.src.GetRasterBand(band).SetScale(scale_factor)
-            self.src.GetRasterBand(band).SetOffset(offset)
+                self.src.GetRasterBand(band).WriteArray(data_write[band], xoff=col, yoff=row)
+
+    def __to_dict(self, arg):
+        """
+        Assigns non-iterable object to a dictionary with band numbers as keys. If `arg` is already a dictionary the
+        same object is returned.
+
+        Parameters
+        ----------
+        arg : non-iterable or dict
+            Non-iterable, which should be converted to a dict.
+
+        Returns
+        -------
+        arg_dict : dict
+            Dictionary mapping band numbers with the value of `arg`.
+
+        """
+        if not isinstance(arg, dict):
+            arg_dict = dict()
+            for band in self.bands:
+                arg_dict[band] = arg
+        else:
+            arg_dict = arg
+
+        return arg_dict
+
+    def __to_iterable(self, arg):
+        """
+        Converts non-iterable object to a list. If `arg` is already a list or tuple the same object is returned.
+
+        Parameters
+        ----------
+        arg : non-iterable or list or tuple
+            Non-iterable, which should be converted to a list.
+
+        Returns
+        -------
+        arg_list : list or tuple
+            List containing `arg` as a value.
+
+        """
+        if not isinstance(arg, (list, tuple)):
+            arg_list = [arg]
+        else:
+            arg_list = arg
+        return arg_list
 
     def flush(self):
         """
