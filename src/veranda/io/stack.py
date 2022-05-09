@@ -25,7 +25,7 @@ import xarray as xr
 import netCDF4
 
 from veranda.io.geotiff import GeoTiffFile
-from veranda.raster.driver.netcdf import NcFile
+from veranda.raster.native.netcdf import NcFile
 
 gdal_dtype = {"uint8": gdal.GDT_Byte,
               "int16": gdal.GDT_Int16,
@@ -54,7 +54,7 @@ class GeoTiffRasterStack:
 
     """
     A GeoTiffRasterTimeStack is a collection of GeoTiff files, which together
-    represent a time series stack of raster data.
+    represent a time series stack of raster mosaic.
 
     Parameters
     ----------
@@ -82,7 +82,7 @@ class GeoTiffRasterStack:
     sref : str
         Coordinate Reference System (CRS) in Wkt form (default None).
     tags : dict, optional
-        Meta data tags (default None).
+        Meta mosaic tags (default None).
     gdal_opt : dict, optional
         Driver specific control parameters (default None).
     auto_decode : bool, optional
@@ -137,7 +137,7 @@ class GeoTiffRasterStack:
             vrt_filepath = os.path.join(path, tmp_filename)
             filepaths = inventory.dropna()['filepath'].to_list()
             bands = 1 if "band" not in inventory.keys() else inventory.dropna()['band'].to_list()  # take first band as a default
-            nodatavals = -9999 if "nodataval" not in inventory.keys() else inventory.dropna()['nodataval'].to_list() # take -9999 as a default no data value
+            nodatavals = -9999 if "nodataval" not in inventory.keys() else inventory.dropna()['nodataval'].to_list() # take -9999 as a default no mosaic value
             scale_factors = 1 if "scale_factor" not in inventory.keys() else inventory.dropna()['scale_factor'].to_list()
             add_offsets = 1 if "add_offset" not in inventory.keys() else inventory.dropna()['add_offset'].to_list()
             create_vrt_file(vrt_filepath, filepaths, bands=bands, geotrans=self.geotrans,
@@ -150,7 +150,7 @@ class GeoTiffRasterStack:
     def read(self, row=None, col=None, n_rows=1, n_cols=1, band=1, nodataval=-9999,
              decoder=None, decoder_kwargs=None, idx=None):
         """
-        Read data from a VRT raster file stack.
+        Read mosaic from a VRT raster file stack.
 
         Parameters
         ----------
@@ -167,7 +167,7 @@ class GeoTiffRasterStack:
         bands : int or list of int, optional
             Band numbers (starting with 1). If None, all bands will be read.
         nodatavals : tuple or list, optional
-            List of no data values for each band.
+            List of no mosaic values for each band.
             Default: -9999 for each band.
         decoder : function, optional
             Decoding function expecting a NumPy array as input.
@@ -176,7 +176,7 @@ class GeoTiffRasterStack:
 
         Returns
         -------
-        data : numpy.ndarray
+        mosaic : numpy.ndarray
             Data set.
         """
         decoder_kwargs = {} if decoder_kwargs is None else decoder_kwargs
@@ -218,7 +218,7 @@ class GeoTiffRasterStack:
 
     def _auto_decode(self, data, band=1, vrt=None):
         """
-        Applies auto-decoding (if activated) to data related to a specific band.
+        Applies auto-decoding (if activated) to mosaic related to a specific band.
 
         Parameters
         ----------
@@ -229,8 +229,8 @@ class GeoTiffRasterStack:
 
         Returns
         -------
-        data : np.array
-            Decoded data if auto-decoding is activated.
+        mosaic : np.array
+            Decoded mosaic if auto-decoding is activated.
 
         """
         vrt = vrt if vrt is not None else self.vrt
@@ -250,22 +250,22 @@ class GeoTiffRasterStack:
 
     def _fill_nan(self, data):
         """
-        Extends data set with nan values where no file paths are available in the inventory.
+        Extends mosaic set with nan values where no file paths are available in the inventory.
 
         Parameters
         ----------
         data : numpy.ndarray
-            3D NumPy data set.
+            3D NumPy mosaic set.
 
         Returns
         -------
         numpy.ndarray
-            3D NumPy data set and NaN values where no file path is given in the inventory.
+            3D NumPy mosaic set and NaN values where no file path is given in the inventory.
         """
         if None in self.inventory['filepath'].to_list():
             n_entries = len(self.inventory)
             ext_data = np.ones((n_entries, data.shape[-2], data.shape[-1]))*np.nan
-            # get indexes of non nan/None data layers
+            # get indexes of non nan/None mosaic layers
             idxs = np.arange(n_entries)[self.inventory['filepath'].notnull()]
             ext_data[idxs, :, :] = data
             return ext_data
@@ -274,24 +274,24 @@ class GeoTiffRasterStack:
 
     def write(self, data, filepath, band=None, encoder=None, nodataval=None, encoder_kwargs=None, ct=None):
         """
-        Write data into raster file.
+        Write mosaic into raster file.
 
         Parameters
         ----------
         data : numpy.ndarray (3d)
-            Raster data set, either as single image (2d) or as stack (3d).
+            Raster mosaic set, either as single image (2d) or as stack (3d).
             Dimensions [band, x, y]
         band : int, optional
             Band number (starting with 1). If band number is provided,
-            raster data set has to be 2d.
-            Default: Raster data set is 3d and all bands a written at
+            raster mosaic set has to be 2d.
+            Default: Raster mosaic set is 3d and all bands a written at
             the same time.
         encoder : function
             Encoding function expecting a NumPy array as input.
         encoder_kwargs : dict, optional
             Keyword arguments for the encoder.
         nodataval : tuple or list, optional
-            List of no data values for each band.
+            List of no mosaic values for each band.
             Default: -9999 for each band.
         ct : tuple or list, optional
             List of color tables for each band.
@@ -307,12 +307,12 @@ class GeoTiffRasterStack:
 
     def write_from_xr(self, ds, dir_path):
         """
-        Write data set into raster time stack.
+        Write mosaic set into raster time stack.
 
         Parameters
         ----------
         ds : xarray.Dataset
-            Input data set.
+            Input mosaic set.
         """
         time_var = ds['time'].to_index()
 
@@ -363,7 +363,7 @@ class GeoTiffRasterStack:
 
             yield time_stamp, self._auto_decode(data, band)
 
-    def export_to_nc(self, path, band='data', **kwargs):
+    def export_to_nc(self, path, band='mosaic', **kwargs):
         """
         Export to NetCDF files.
 
@@ -420,7 +420,7 @@ def create_vrt_file(vrt_filepath, filepaths, nodataval=None, scale_factor=None, 
     filepaths : list
         List of files to include in the VRT.
     nodata : float, optional
-        No data value (default: None).
+        No mosaic value (default: None).
     band : int, optional
         Band of the input file (default: 1)
     """
@@ -503,7 +503,7 @@ class NcRasterStack:
 
     """
     A NcRasterTimeStack is a collection of NetCDF files, which together
-    represent a time series stack of raster data.
+    represent a time series stack of raster mosaic.
 
     Parameters
     ----------
@@ -604,7 +604,7 @@ class NcRasterStack:
     def read(self, row=None, col=None, n_rows=1, n_cols=1, band="1", nodataval=-9999, decoder=None,
              decoder_kwargs=None):
         """
-        Read data from netCDF4 file.
+        Read mosaic from netCDF4 file.
 
         Parameters
         ----------
@@ -621,7 +621,7 @@ class NcRasterStack:
         band : str or list of str, optional
             Band numbers/names. If None, all bands will be read.
         nodataval : tuple or list, optional
-            List of no data values for each band.
+            List of no mosaic values for each band.
             Default: -9999 for each band.
         decoder : function, optional
             Decoding function expecting a NumPy array as input.
@@ -630,8 +630,8 @@ class NcRasterStack:
 
         Returns
         -------
-        data : xarray.Dataset
-            Data set with the dimensions [time, y, x] and one data variable.
+        mosaic : xarray.Dataset
+            Data set with the dimensions [time, y, x] and one mosaic variable.
         """
 
         decoder_kwargs = {} if decoder_kwargs is None else decoder_kwargs
@@ -675,7 +675,7 @@ class NcRasterStack:
     # ToDO: rechunk?
     def _fill_nan(self, data):
         """
-        Extends data set with nan values where data and inventory time stamps mismatch.
+        Extends mosaic set with nan values where mosaic and inventory time stamps mismatch.
 
         Parameters
         ----------
@@ -693,7 +693,7 @@ class NcRasterStack:
         """
         if None in self.inventory['filepath'].to_list():
             timestamps = data['time'].to_index().tolist()
-            nan_timestamps = self.inventory.index[~self.inventory['filepath'].notnull()].to_list()  # get all timestamps which do not contain data
+            nan_timestamps = self.inventory.index[~self.inventory['filepath'].notnull()].to_list()  # get all timestamps which do not contain mosaic
             timestamps.extend(nan_timestamps)
             return data.reindex(time=sorted(timestamps))
         else:
@@ -712,8 +712,8 @@ class NcRasterStack:
         ------
         time_stamp : datetime
             Time stamp.
-        data : numpy.ndarray
-            2d data set.
+        mosaic : numpy.ndarray
+            2d mosaic set.
         """
 
         for i in range(self.mfdataset[var_name].shape[0]):
@@ -764,12 +764,12 @@ class NcRasterStack:
 
     def write(self, ds, filepath, band=None, encoder=None, nodataval=None, encoder_kwargs=None, auto_scale=False):
         """
-        Write data set into raster time stack.
+        Write mosaic set into raster time stack.
 
         Parameters
         ----------
         ds : xarray.Dataset
-            Input data set.
+            Input mosaic set.
         """
         if os.path.exists(filepath):
             mode = 'a'

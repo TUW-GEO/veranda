@@ -26,9 +26,9 @@ class RasterAccess:
         Parameters
         ----------
         src_raster_geom : geospade.raster.RasterGeometry
-            Raster geometry representing the extent and indices of the data to access.
+            Raster geometry representing the extent and indices of the mosaic to access.
         dst_raster_geom : geospade.raster.RasterGeometry
-            Raster geometry representing the extent and indices of the data to assign.
+            Raster geometry representing the extent and indices of the mosaic to assign.
         src_root_raster_geom : geospade.raster.RasterGeometry, optional
             Raster geometry representing the origin to which `src_raster_geom` should be referred to. Defaults to None,
             i.e. the root parent of `src_raster_geom` is used.
@@ -47,28 +47,28 @@ class RasterAccess:
 
     @property
     def src_row_slice(self):
-        """ slice : Indices for the rows of the data to access. """
+        """ slice : Indices for the rows of the mosaic to access. """
         return slice(self.src_window[0], self.src_window[2] + 1)
 
     @property
     def src_col_slice(self):
-        """ slice : Indices for the columns of the data to access. """
+        """ slice : Indices for the columns of the mosaic to access. """
         return slice(self.src_window[1], self.src_window[3] + 1)
 
     @property
     def dst_row_slice(self):
-        """ slice : Indices for the rows of the data to assign. """
+        """ slice : Indices for the rows of the mosaic to assign. """
         return slice(self.dst_window[0], self.dst_window[2] + 1)
 
     @property
     def dst_col_slice(self):
-        """ slice : Indices for the cols of the data to assign. """
+        """ slice : Indices for the cols of the mosaic to assign. """
         return slice(self.dst_window[1], self.dst_window[3] + 1)
 
 
 class RasterData(metaclass=abc.ABCMeta):
     """
-    Combines spatial information represented as a mosaic with raster data given as 3D array data in memory or as
+    Combines spatial information represented as a mosaic with raster mosaic given as 3D array mosaic in memory or as
     geospatial files on disk.
 
     """
@@ -90,8 +90,8 @@ class RasterData(metaclass=abc.ABCMeta):
             Mosaic representing the spatial allocation of the given files. The tiles of the mosaic have to match the
             ID's/names of the 'tile_id' column.
         data : xr.Dataset, optional
-            Raster data stored in memory. It must match the spatial sampling and CRS of the mosaic, but not its spatial
-            extent or tiling. Moreover, the dimension of the data along the first dimension (stack/file dimension), must
+            Raster mosaic stored in memory. It must match the spatial sampling and CRS of the mosaic, but not its spatial
+            extent or tiling. Moreover, the dimension of the mosaic along the first dimension (stack/file dimension), must
             match the entries/filepaths in `file_register`.
         file_dimension : str, optional
             Dimension/column name of the dimension, where to stack the files along (first axis), e.g. time, bands etc.
@@ -114,12 +114,12 @@ class RasterData(metaclass=abc.ABCMeta):
 
     @property
     def mosaic(self):
-        """ geospade.raster.MosaicGeometry : Mosaic geometry of the raster data files. """
+        """ geospade.raster.MosaicGeometry : Mosaic geometry of the raster mosaic files. """
         return self._mosaic
 
     @property
     def data_geom(self):
-        """ geospade.raster.Tile : Mosaic geometry of the raster data files. """
+        """ geospade.raster.Tile : Mosaic geometry of the raster mosaic files. """
         return self._data_geom
 
     @property
@@ -135,7 +135,7 @@ class RasterData(metaclass=abc.ABCMeta):
     @property
     def shape(self):
         """
-        3-tuple or 2-tuple : Shape of the file-based data structure, i.e. a tuple of the number of layers and the
+        3-tuple or 2-tuple : Shape of the file-based mosaic structure, i.e. a tuple of the number of layers and the
         number of tiles. If the mosaic is regular, then the shape is a 3-tuple, where the last two entries are the
         number of tiles in x- and y-direction.
 
@@ -150,17 +150,17 @@ class RasterData(metaclass=abc.ABCMeta):
 
     @property
     def file_register(self):
-        """ pd.Dataframe : File register of the raster data object. """
+        """ pd.Dataframe : File register of the raster mosaic object. """
         return self._file_register.drop(columns=['driver_id'])
 
     @property
     def data(self):
-        """ xr.Dataset : View on internal raster data. """
+        """ xr.Dataset : View on internal raster mosaic. """
         return self._view_data()
 
     @abc.abstractmethod
     def load(self, *args, **kwargs):
-        """ An abstract method for loading data either from disk or RAM. """
+        """ An abstract method for loading mosaic either from disk or RAM. """
         pass
 
     @staticmethod
@@ -171,9 +171,9 @@ class RasterData(metaclass=abc.ABCMeta):
         Parameters
         ----------
         data : xr.Dataset
-            Raster data.
+            Raster mosaic.
         sref : geospade.crs.SpatialRef, optional
-            CRS of the data if not given under the 'spatial_ref' variable.
+            CRS of the mosaic if not given under the 'spatial_ref' variable.
 
         Returns
         -------
@@ -183,7 +183,7 @@ class RasterData(metaclass=abc.ABCMeta):
         """
         ds_sref = data.get('spatial_ref')
         if ds_sref is None and sref is None:
-            err_msg = "Neither the data contains CRS information nor the keyword"
+            err_msg = "Neither the mosaic contains CRS information nor the keyword"
             raise ValueError(err_msg)
         if ds_sref is not None:
             sref = SpatialRef(ds_sref.attrs.get('spatial_ref'))
@@ -196,8 +196,8 @@ class RasterData(metaclass=abc.ABCMeta):
 
     def apply_nan(self):
         """
-        Converts no data values given as an attribute 'fill_value' to np.nan. Note that this replacement implicitly
-        converts the data format to float.
+        Converts no mosaic values given as an attribute 'fill_value' to np.nan. Note that this replacement implicitly
+        converts the mosaic format to float.
 
         """
         if self._data is not None:
@@ -214,13 +214,13 @@ class RasterData(metaclass=abc.ABCMeta):
         cmds : list of 2-tuple
 
         inplace : bool, optional
-            If true, the current raster data object is modified.
-            If false, a new raster data instance will be returned (default).
+            If true, the current raster mosaic object is modified.
+            If false, a new raster mosaic instance will be returned (default).
 
         Returns
         -------
         RasterData :
-            Raster data object with a mosaic and a file register in compliance with the provided select operations.
+            Raster mosaic object with a mosaic and a file register in compliance with the provided select operations.
 
         """
         if not inplace:
@@ -243,20 +243,20 @@ class RasterData(metaclass=abc.ABCMeta):
 
     def select_tiles(self, tile_names, inplace=False):
         """
-        Selects a certain tile from a raster data object.
+        Selects a certain tile from a raster mosaic object.
 
         Parameters
         ----------
         tile_names : list of str or int
             Tile names/IDs.
         inplace : bool, optional
-            If true, the current raster data object is modified.
-            If false, a new raster data instance will be returned (default).
+            If true, the current raster mosaic object is modified.
+            If false, a new raster mosaic instance will be returned (default).
 
         Returns
         -------
         RasterData :
-            Raster data object with a mosaic and a file register only consisting of the given tiles.
+            Raster mosaic object with a mosaic and a file register only consisting of the given tiles.
 
         """
         if not inplace:
@@ -277,13 +277,13 @@ class RasterData(metaclass=abc.ABCMeta):
         layer_ids : list
             Layer IDs to select.
         inplace : bool, optional
-            If true, the current raster data object is modified.
-            If false, a new raster data instance will be returned (default).
+            If true, the current raster mosaic object is modified.
+            If false, a new raster mosaic instance will be returned (default).
 
         Returns
         -------
         RasterData :
-            Raster data object with a file register only consisting of the given layer IDs.
+            Raster mosaic object with a file register only consisting of the given layer IDs.
 
         """
         if not inplace:
@@ -311,13 +311,13 @@ class RasterData(metaclass=abc.ABCMeta):
         width : int, optional
             Number of columns/width of the pixel window.
         inplace : bool, optional
-            If true, the current raster data object is modified.
-            If false, a new raster data instance will be returned (default).
+            If true, the current raster mosaic object is modified.
+            If false, a new raster mosaic instance will be returned (default).
 
         Returns
         -------
         RasterData :
-            Raster data object a mosaic and a data geometry only consisting of the intersected tile with the
+            Raster mosaic object a mosaic and a mosaic geometry only consisting of the intersected tile with the
             pixel window.
 
         Notes
@@ -333,7 +333,7 @@ class RasterData(metaclass=abc.ABCMeta):
         if self._data_geom is not None:
             self._data_geom.slice_by_rc(row, col, height=height, width=width, inplace=True, name=0)
             if self._data_geom is None:
-                wrn_msg = "Pixels are outside the extent of the raster data."
+                wrn_msg = "Pixels are outside the extent of the raster mosaic."
                 warnings.warn(wrn_msg)
 
         if len(self._mosaic.all_tiles) == 1:
@@ -357,13 +357,13 @@ class RasterData(metaclass=abc.ABCMeta):
         sref : geospade.crs.SpatialRef
             CRS of the given coordinate tuple.
         inplace : bool, optional
-            If true, the current raster data object is modified.
-            If false, a new raster data instance will be returned (default).
+            If true, the current raster mosaic object is modified.
+            If false, a new raster mosaic instance will be returned (default).
 
         Returns
         -------
         RasterData :
-            Raster data object with a file register and a mosaic only consisting of the intersected tile containing
+            Raster mosaic object with a file register and a mosaic only consisting of the intersected tile containing
             information on the location of the time series.
 
         """
@@ -375,7 +375,7 @@ class RasterData(metaclass=abc.ABCMeta):
             row, col = self._data_geom.xy2rc(x, y, sref=sref)
             self._data_geom.slice_by_rc(row, col, inplace=True, name=0)
             if self._data_geom is None:
-                wrn_msg = "Coordinates are outside the spatial extent of the raster data."
+                wrn_msg = "Coordinates are outside the spatial extent of the raster mosaic."
                 warnings.warn(wrn_msg)
 
         tile_oi = self._mosaic.xy2tile(x, y, sref=sref)
@@ -386,7 +386,7 @@ class RasterData(metaclass=abc.ABCMeta):
             self._mosaic.from_tile_list([tile_oi], inplace=True)
             self._file_register = self._file_register[self._file_register['geom_id'] == tile_oi.parent_root.name]
         else:
-            wrn_msg = "Coordinates are outside the spatial extent of the raster data files."
+            wrn_msg = "Coordinates are outside the spatial extent of the raster mosaic files."
             warnings.warn(wrn_msg)
             return
 
@@ -403,13 +403,13 @@ class RasterData(metaclass=abc.ABCMeta):
         sref : geospade.crs.SpatialRef
             CRS of the given bounding box coordinates.
         inplace : bool, optional
-            If true, the current raster data object is modified.
-            If false, a new raster data instance will be returned (default).
+            If true, the current raster mosaic object is modified.
+            If false, a new raster mosaic instance will be returned (default).
 
         Returns
         -------
         RasterData :
-            Raster data object with a file register and a mosaic only consisting of the intersected tiles.
+            Raster mosaic object with a file register and a mosaic only consisting of the intersected tiles.
 
         """
         if not inplace:
@@ -429,16 +429,16 @@ class RasterData(metaclass=abc.ABCMeta):
         sref : geospade.crs.SpatialRef
             CRS of the given bounding box coordinates.
         apply_mask : bool, optional
-            True if pixels outside the polygon should be set to a no data value (default).
+            True if pixels outside the polygon should be set to a no mosaic value (default).
             False if every pixel withing the bounding box of the polygon should be included.
         inplace : bool, optional
-            If true, the current raster data object is modified.
-            If false, a new raster data instance will be returned (default).
+            If true, the current raster mosaic object is modified.
+            If false, a new raster mosaic instance will be returned (default).
 
         Returns
         -------
         RasterData :
-            Raster data object with a file register and a mosaic only consisting of the intersected tiles.
+            Raster mosaic object with a file register and a mosaic only consisting of the intersected tiles.
 
         """
         if not inplace:
@@ -448,13 +448,13 @@ class RasterData(metaclass=abc.ABCMeta):
         if self._data_geom is not None:
             self._data_geom.slice_by_geom(polygon, inplace=True)
             if self._data_geom is None:
-                wrn_msg = "Polygon is outside the spatial extent of the raster data."
+                wrn_msg = "Polygon is outside the spatial extent of the raster mosaic."
                 warnings.warn(wrn_msg)
 
         polygon = any_geom2ogr_geom(polygon, sref=sref)
         sliced_mosaic = self._mosaic.slice_by_geom(polygon, active_only=False, apply_mask=apply_mask, inplace=False)
         if sliced_mosaic is None:
-            wrn_msg = "Polygon is outside the spatial extent of the raster data files."
+            wrn_msg = "Polygon is outside the spatial extent of the raster mosaic files."
             warnings.warn(wrn_msg)
             return
 
@@ -465,7 +465,7 @@ class RasterData(metaclass=abc.ABCMeta):
         return self
 
     def _view_data(self):
-        """ xr.Dataset : Returns a subset of the data according to the intersected mosaic. """
+        """ xr.Dataset : Returns a subset of the mosaic according to the intersected mosaic. """
         data = self._data
         if data is not None:
             origin = (self._data_geom.parent_root.ul_x, self._data_geom.parent_root.ul_y)
@@ -490,7 +490,7 @@ class RasterData(metaclass=abc.ABCMeta):
 
     def close(self, layer_ids=None, clear_ram=True):
         """
-        Closes open file handles and optionally data in stored in RAM.
+        Closes open file handles and optionally mosaic in stored in RAM.
 
         Parameters
         ----------
@@ -498,7 +498,7 @@ class RasterData(metaclass=abc.ABCMeta):
             Layer IDs indicating the file handles which should be closed. Defaults to None, i.e. all file handles are
             closed.
         clear_ram : bool, optional
-            If true (default), memory allocated by the internal data object is released.
+            If true (default), memory allocated by the internal mosaic object is released.
 
         """
         if layer_ids is not None:
@@ -535,7 +535,7 @@ class RasterData(metaclass=abc.ABCMeta):
         Returns
         -------
         RasterData
-            Deepcopy of raster data.
+            Deepcopy of raster mosaic.
 
         """
         cls = self.__class__
@@ -547,7 +547,7 @@ class RasterData(metaclass=abc.ABCMeta):
 
 
 class RasterDataReader(RasterData):
-    """ Allows to read and modify a stack of raster data. """
+    """ Allows to read and modify a stack of raster mosaic. """
     def __init__(self, file_register, mosaic, file_dimension='idx', file_coords=None):
         """
         Constructor of `RasterDataReader`.
@@ -578,14 +578,14 @@ class RasterDataReader(RasterData):
     @abc.abstractmethod
     def read(self, *args, auto_decode=False, decoder=None, decoder_kwargs=None, **kwargs):
         """
-        Read data from disk.
+        Read mosaic from disk.
 
         Parameters
         ----------
         auto_decode : bool, optional
-            True if data should be decoded according to the information available in its metadata (default).
+            True if mosaic should be decoded according to the information available in its metadata (default).
         decoder : callable, optional
-            Function allowing to decode data read from disk.
+            Function allowing to decode mosaic read from disk.
         decoder_kwargs : dict, optional
             Keyword arguments for the decoder.
 
@@ -595,7 +595,7 @@ class RasterDataReader(RasterData):
     @abc.abstractmethod
     def _to_xarray(self, *args, **kwargs):
         """
-        Converts data read from disk to an xarray dataset.
+        Converts mosaic read from disk to an xarray dataset.
 
         Returns
         -------
@@ -605,7 +605,7 @@ class RasterDataReader(RasterData):
         pass
 
     def load(self, *args, **kwargs):
-        """ Loads data either from disk or RAM. """
+        """ Loads mosaic either from disk or RAM. """
         if self._data is not None and self._data_geom is not None:
             self._data = self.data
             self._data_geom.parent = None
@@ -614,7 +614,7 @@ class RasterDataReader(RasterData):
 
 
 class RasterDataWriter(RasterData):
-    """ Allows to write and modify a stack of raster data. """
+    """ Allows to write and modify a stack of raster mosaic. """
     def __init__(self, file_register, mosaic, data=None, file_dimension='idx', file_coords=None):
         """
         Constructor of `RasterDataWriter`.
@@ -633,8 +633,8 @@ class RasterDataWriter(RasterData):
             Mosaic representing the spatial allocation of the given files. The tiles of the mosaic have to match the
             ID's/names of the 'tile_id' column.
         data : xr.Dataset, optional
-            Raster data stored in memory. It must match the spatial sampling and CRS of the mosaic, but not its spatial
-            extent or tiling. Moreover, the dimension of the data along the first dimension (stack/file dimension), must
+            Raster mosaic stored in memory. It must match the spatial sampling and CRS of the mosaic, but not its spatial
+            extent or tiling. Moreover, the dimension of the mosaic along the first dimension (stack/file dimension), must
             match the entries/filepaths in `file_register`.
         file_dimension : str, optional
             Dimension/column name of the dimension, where to stack the files along (first axis), e.g. time, bands etc.
@@ -649,18 +649,18 @@ class RasterDataWriter(RasterData):
     @abc.abstractmethod
     def write(self, data, encoder=None, encoder_kwargs=None, overwrite=False, **kwargs):
         """
-        Writes a certain chunk of data to disk.
+        Writes a certain chunk of mosaic to disk.
 
         Parameters
         ----------
         data : xr.Dataset
-            Data chunk to be written to disk or being appended to existing data.
+            Data chunk to be written to disk or being appended to existing mosaic.
         encoder : callable, optional
-            Function allowing to encode data before writing it to disk.
+            Function allowing to encode mosaic before writing it to disk.
         encoder_kwargs : dict, optional
             Keyword arguments for the encoder.
         overwrite : bool, optional
-            True if data should be overwritten, false if not (default).
+            True if mosaic should be overwritten, false if not (default).
 
         """
         pass
@@ -668,19 +668,19 @@ class RasterDataWriter(RasterData):
     @abc.abstractmethod
     def export(self, apply_tiling=False, encoder=None, encoder_kwargs=None, overwrite=False, **kwargs):
         """
-        Writes all the internally stored data to disk.
+        Writes all the internally stored mosaic to disk.
 
         Parameters
         ----------
         apply_tiling : bool, optional
-            True if the internal data should be tiled according to the mosaic.
-            False if the internal data composes a new tile and should not be tiled (default).
+            True if the internal mosaic should be tiled according to the mosaic.
+            False if the internal mosaic composes a new tile and should not be tiled (default).
         encoder : callable, optional
-            Function allowing to encode data before writing it to disk.
+            Function allowing to encode mosaic before writing it to disk.
         encoder_kwargs : dict, optional
             Keyword arguments for the encoder.
         overwrite : bool, optional
-            True if data should be overwritten, false if not (default).
+            True if mosaic should be overwritten, false if not (default).
 
         """
         pass
@@ -693,7 +693,7 @@ class RasterDataWriter(RasterData):
         Parameters
         ----------
         data : xr.Dataset
-            Raster data.
+            Raster mosaic.
         file_register : pd.Dataframe
             Data frame managing a stack/list of files containing the following columns:
                 - 'filepath' : str
@@ -705,7 +705,7 @@ class RasterDataWriter(RasterData):
         mosaic : geospade.raster.MosaicGeometry, optional
             Mosaic representing the spatial allocation of the given files. The tiles of the mosaic have to match the
             ID's/names of the 'tile_id' column. If it is None, a one-tile mosaic will be created from the given
-            data.
+            mosaic.
 
         Returns
         -------
@@ -717,7 +717,7 @@ class RasterDataWriter(RasterData):
         return cls(file_register, mosaic, data=data)
 
     def load(self, *args, **kwargs):
-        """ Loads data from RAM. """
+        """ Loads mosaic from RAM. """
         if self._data is not None and self._data_geom is not None:
             self._data = self.data
             self._data_geom.parent = None

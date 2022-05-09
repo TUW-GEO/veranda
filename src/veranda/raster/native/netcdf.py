@@ -14,11 +14,11 @@ from osgeo import osr
 DECODING_ATTR = ["scale_factor", "add_offset"]
 
 
-class NetCdf4Driver:
+class NetCdf4File:
     """
     Wrapper for reading and writing netCDF4 files. It will create three
     predefined dimensions (time, x, y), with time as an unlimited dimension
-    and x, y are defined by the shape of the data.
+    and x, y are defined by the shape of the mosaic.
 
     The arrays to be written should have the following dimensions: time, x, y
 
@@ -37,7 +37,7 @@ class NetCdf4Driver:
     complevel : int, optional
         Compression level (default 2)
     zlib : bool, optional
-        If the optional keyword zlib is True, the data will be compressed
+        If the optional keyword zlib is True, the mosaic will be compressed
         in the netCDF file using gzip compression (default True).
     geotrans : tuple or list, optional
         Geotransform parameters (default (0, 1, 0, 0, 0, 1)).
@@ -308,7 +308,7 @@ class NetCdf4Driver:
     def read(self, row=0, col=0, n_rows=None, n_cols=None, data_variables=None, decoder=None,
              decoder_kwargs=None):
         """
-        Read data from netCDF4 file.
+        Read mosaic from netCDF4 file.
 
         Parameters
         ----------
@@ -325,7 +325,7 @@ class NetCdf4Driver:
         band : str or list of str, optional
             Band numbers/names. If None, all bands will be read.
         nodataval : tuple or list, optional
-            List of no data values for each band.
+            List of no mosaic values for each band.
             Default: -9999 for each band.
         decoder : function, optional
             Decoding function expecting a NumPy array as input.
@@ -334,7 +334,7 @@ class NetCdf4Driver:
 
         Returns
         -------
-        data : xarray.Dataset or netCDF4.variables
+        mosaic : xarray.Dataset or netCDF4.variables
             Data stored in NetCDF file. Data type depends on read mode.
 
         """
@@ -364,7 +364,7 @@ class NetCdf4Driver:
 
     def write(self, ds, encoder=None, encoder_kwargs=None, **kwargs):
         """
-        Write data into netCDF4 file.
+        Write mosaic into netCDF4 file.
 
         Parameters
         ----------
@@ -390,7 +390,7 @@ class NetCdf4Driver:
         else:
             append_start = 0
 
-        # fill coordinate data
+        # fill coordinate mosaic
         if ds['time'].dtype == "<M8[ns]":  # "<M8[ns]" is numpy datetime in ns # ToDo: solve this in a better way
             timestamps = netCDF4.date2num(ds['time'].to_index().to_pydatetime(),
                                           self.time_units, 'standard')
@@ -429,7 +429,7 @@ class NetCdf4Driver:
 
     def __to_dict(self, arg):
         """
-        Assigns non-iterable object to a dictionary with data variables as keys. If `arg` is already a dictionary the
+        Assigns non-iterable object to a dictionary with mosaic variables as keys. If `arg` is already a dictionary the
         same object is returned.
 
         Parameters
@@ -440,7 +440,7 @@ class NetCdf4Driver:
         Returns
         -------
         arg_dict : dict
-            Dictionary mapping data variables with the value of `arg`.
+            Dictionary mapping mosaic variables with the value of `arg`.
 
         """
         if not isinstance(arg, dict):
@@ -510,7 +510,7 @@ class NetCdfXrFile:
     """
     Wrapper for reading and writing netCDF4 files with xarray. It will create three
     predefined dimensions (time, x, y), with time as an unlimited dimension
-    and x, y are defined by the shape of the data.
+    and x, y are defined by the shape of the mosaic.
 
     The arrays to be written should have the following dimensions: time, x, y
 
@@ -529,7 +529,7 @@ class NetCdfXrFile:
     complevel : int, optional
         Compression level (default 2)
     zlib : bool, optional
-        If the optional keyword zlib is True, the data will be compressed
+        If the optional keyword zlib is True, the mosaic will be compressed
         in the netCDF file using gzip compression (default True).
     geotrans : tuple or list, optional
         Geotransform parameters (default (0, 1, 0, 0, 0, 1)).
@@ -653,7 +653,7 @@ class NetCdfXrFile:
     def read(self, row=0, col=0, n_rows=None, n_cols=None, data_variables=None, decoder=None,
              decoder_kwargs=None):
         """
-        Read data from netCDF4 file.
+        Read mosaic from netCDF4 file.
 
         Parameters
         ----------
@@ -676,7 +676,7 @@ class NetCdfXrFile:
 
         Returns
         -------
-        data : xarray.Dataset or netCDF4.variables
+        mosaic : xarray.Dataset or netCDF4.variables
             Data stored in NetCDF file. Data type depends on read mode.
 
         """
@@ -704,7 +704,7 @@ class NetCdfXrFile:
     def write(self, ds, data_variables=None, encoder=None, encoder_kwargs=None, compute=True, unlimited_dims=None,
               **kwargs):
         """
-        Write data into a netCDF4 file.
+        Write mosaic into a netCDF4 file.
 
         Parameters
         ----------
@@ -746,7 +746,7 @@ class NetCdfXrFile:
 
     def __to_dict(self, arg):
         """
-        Assigns non-iterable object to a dictionary with data variables as keys. If `arg` is already a dictionary the
+        Assigns non-iterable object to a dictionary with mosaic variables as keys. If `arg` is already a dictionary the
         same object is returned.
 
         Parameters
@@ -757,7 +757,7 @@ class NetCdfXrFile:
         Returns
         -------
         arg_dict : dict
-            Dictionary mapping data variables with the value of `arg`.
+            Dictionary mapping mosaic variables with the value of `arg`.
 
         """
         if not isinstance(arg, dict) or isinstance(arg[arg.keys()[0]], dict):

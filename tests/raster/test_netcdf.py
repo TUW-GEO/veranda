@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from veranda.raster.driver.netcdf import NetCdf4Driver
+from veranda.raster.native.netcdf import NetCdf4File
 
 
 class NetCdf4Test(unittest.TestCase):
@@ -55,11 +55,11 @@ class NetCdf4Test(unittest.TestCase):
                              'inc': (dims, data, attr2),
                              'azi': (dims, data, attr2)}, coords=coords)
 
-        with NetCdf4Driver(self.filepath, mode='w', data_variables=['sig', 'inc', 'azi'],
-                           nodatavals={'inc': -9999, 'azi': -9999}, dtypes={'inc': 'int32', 'azi': 'int32'}) as nc:
+        with NetCdf4File(self.filepath, mode='w', data_variables=['sig', 'inc', 'azi'],
+                         nodatavals={'inc': -9999, 'azi': -9999}, dtypes={'inc': 'int32', 'azi': 'int32'}) as nc:
             nc.write(ds_ref)
 
-        with NetCdf4Driver(self.filepath) as nc:
+        with NetCdf4File(self.filepath) as nc:
             ds = nc.read()
             np.testing.assert_array_equal(ds['sig'][:], ds_ref['sig'][:])
             np.testing.assert_array_equal(ds['inc'][:], ds_ref['inc'][:])
@@ -67,7 +67,7 @@ class NetCdf4Test(unittest.TestCase):
 
     def test_auto_decoding(self):
         """
-        Test automatic decoding of data variables.
+        Test automatic decoding of mosaic variables.
         """
         data = np.ones((100, 100, 100), dtype=np.float32)
         dims = ['time', 'x', 'y']
@@ -80,16 +80,16 @@ class NetCdf4Test(unittest.TestCase):
                              'inc': (dims, data, attr2),
                              'azi': (dims, data, attr3)}, coords=coords)
 
-        with NetCdf4Driver(self.filepath, mode='w') as nc:
+        with NetCdf4File(self.filepath, mode='w') as nc:
             nc.write(ds_ref)
 
-        with NetCdf4Driver(self.filepath, mode='r', auto_decode=False) as nc:
+        with NetCdf4File(self.filepath, mode='r', auto_decode=False) as nc:
             ds = nc.read()
             np.testing.assert_array_equal(ds['sig'][:], ds_ref['sig'][:])
             np.testing.assert_array_equal(ds['inc'][:], ds_ref['inc'][:])
             np.testing.assert_array_equal(ds['azi'][:], ds_ref['azi'][:])
 
-        with NetCdf4Driver(self.filepath, mode='r', auto_decode=True) as nc:
+        with NetCdf4File(self.filepath, mode='r', auto_decode=True) as nc:
             ds = nc.read()
             np.testing.assert_array_equal(ds['sig'][:], ds_ref['sig'][:] * 2 + 3)
             np.testing.assert_array_equal(ds['inc'][:], ds_ref['inc'][:] * 2)
@@ -106,16 +106,16 @@ class NetCdf4Test(unittest.TestCase):
         ds_ref = xr.Dataset({'sig': (dims, data),
                              'inc': (dims, data)}, coords=coords)
 
-        with NetCdf4Driver(self.filepath, mode='w') as nc:
+        with NetCdf4File(self.filepath, mode='w') as nc:
             nc.write(ds_ref)
 
-        with NetCdf4Driver(self.filepath, mode='a') as nc:
+        with NetCdf4File(self.filepath, mode='a') as nc:
             nc.write(ds_ref)
 
-        with NetCdf4Driver(self.filepath, mode='a') as nc:
+        with NetCdf4File(self.filepath, mode='a') as nc:
             nc.write(ds_ref)
 
-        with NetCdf4Driver(self.filepath) as nc:
+        with NetCdf4File(self.filepath) as nc:
             ds = nc.read()
 
             np.testing.assert_array_equal(
@@ -133,10 +133,10 @@ class NetCdf4Test(unittest.TestCase):
                              'inc': (dims, data)}, coords=coords)
 
         chunksizes = (100, 10, 10)
-        with NetCdf4Driver(self.filepath, mode='w', data_variables=list(ds_ref.data_vars), chunksizes=chunksizes) as nc:
+        with NetCdf4File(self.filepath, mode='w', data_variables=list(ds_ref.data_vars), chunksizes=chunksizes) as nc:
             nc.write(ds_ref)
 
-        with NetCdf4Driver(self.filepath, mode='r') as nc:
+        with NetCdf4File(self.filepath, mode='r') as nc:
             ds = nc.read()
             self.assertEqual(ds['sig'].data.chunksize, chunksizes)
             self.assertEqual(ds['inc'].data.chunksize, chunksizes)
@@ -157,14 +157,14 @@ class NetCdf4Test(unittest.TestCase):
         preemption = 0.75
 
         var_chunk_cache = (size, nelems, preemption)
-        with NetCdf4Driver(self.filepath, mode='w', data_variables=list(ds_ref.data_vars),
-                           var_chunk_caches=var_chunk_cache) as nc:
+        with NetCdf4File(self.filepath, mode='w', data_variables=list(ds_ref.data_vars),
+                         var_chunk_caches=var_chunk_cache) as nc:
             nc.write(ds_ref)
             self.assertEqual(var_chunk_cache,
                              nc.src['sig'].get_var_chunk_cache())
 
-        with NetCdf4Driver(self.filepath, mode='r', data_variables=list(ds_ref.data_vars),
-                           var_chunk_caches=var_chunk_cache) as nc:
+        with NetCdf4File(self.filepath, mode='r', data_variables=list(ds_ref.data_vars),
+                         var_chunk_caches=var_chunk_cache) as nc:
             self.assertEqual(var_chunk_cache,
                              nc.src['sig'].get_var_chunk_cache())
 
@@ -180,10 +180,10 @@ class NetCdf4Test(unittest.TestCase):
                              'inc': (dims, data)}, coords=coords)
 
         time_units = 'days since 2000-01-01 00:00:00'
-        with NetCdf4Driver(self.filepath, mode='w', time_units=time_units) as nc:
+        with NetCdf4File(self.filepath, mode='w', time_units=time_units) as nc:
             nc.write(ds_ref)
 
-        with NetCdf4Driver(self.filepath, time_units=time_units) as nc:
+        with NetCdf4File(self.filepath, time_units=time_units) as nc:
             ds = nc.read()
             np.testing.assert_array_equal(pd.DatetimeIndex(ds['time'].data),
                                           coords['time'])
@@ -202,10 +202,10 @@ class NetCdf4Test(unittest.TestCase):
                               'inc': (dims, data)}, coords=coords)
 
         geotrans = (3000000.0, 500.0, 0.0, 1800000.0, 0.0, -500.0)
-        with NetCdf4Driver(self.filepath, mode='w', geotrans=geotrans) as nc:
+        with NetCdf4File(self.filepath, mode='w', geotrans=geotrans) as nc:
             nc.write(ref_ds)
 
-        with NetCdf4Driver(self.filepath) as nc:
+        with NetCdf4File(self.filepath) as nc:
             ds = nc.read()
 
         x = geotrans[0] + (0.5 + np.arange(xdim)) * geotrans[1] + \

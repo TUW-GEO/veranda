@@ -21,16 +21,16 @@ import unittest
 import numpy as np
 
 from veranda.raster.gdalport import call_gdal_util
-from veranda.raster.driver.geotiff import GeoTiffDriver
+from veranda.raster.native.geotiff import GeoTiffFile
 
 
 class GdalportTest(unittest.TestCase):
 
     def setUp(self):
         """
-        Set up dummy data set.
+        Set up dummy mosaic set.
         """
-        self.data = np.ones((100, 100))
+        self.data = np.ones((1, 100, 100))
         test_dir = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), 'temp')
         if not os.path.isdir(test_dir):
@@ -39,7 +39,7 @@ class GdalportTest(unittest.TestCase):
         self.filename_gdal_trans = os.path.join(test_dir, 'test_gdal_trans.tif')
 
     def test_gdal_translate(self):
-        with GeoTiffDriver(self.filename, mode='w') as gt_file:
+        with GeoTiffFile(self.filename, mode='w') as gt_file:
             gt_file.write(self.data)
         # configure options
         options = {'-of': 'GTiff', '-co': 'COMPRESS=LZW',

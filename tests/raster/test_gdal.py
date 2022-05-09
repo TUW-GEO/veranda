@@ -10,7 +10,7 @@ class GdalTest(unittest.TestCase):
 
     def setUp(self):
         """
-        Set up dummy data set.
+        Set up dummy mosaic set.
         """
         self.wkt = ('PROJCS["Azimuthal_Equidistant",GEOGCS["WGS 84",'
                     'DATUM["WGS_1984",SPHEROID["WGS 84",6378137,'

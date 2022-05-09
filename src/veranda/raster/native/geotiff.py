@@ -7,14 +7,14 @@ import xml.etree.ElementTree as ET
 from veranda.raster.gdalport import NUMPY_TO_GDAL_DTYPE, GDAL_TO_NUMPY_DTYPE
 
 
-class GeoTiffDriver:
+class GeoTiffFile:
     """ GDAL wrapper for reading and writing GeoTIFF files. """
     def __init__(self, filepath, mode='r', geotrans=(0, 1, 0, 0, 0, 1), sref_wkt=None, shape=None,
                  compression='LZW', metadata=None, is_bigtiff=False, is_tiled=True, blocksize=(512, 512),
                  n_bands=1,  dtypes='uint8', scale_factors=1, offsets=0, nodatavals=255, color_tbls=None,
                  color_intprs=None, overwrite=False, auto_decode=False):
         """
-        Constructor of `GeoTiffDriver`.
+        Constructor of `GeoTiffFile`.
 
         Parameters
         ----------
@@ -45,14 +45,14 @@ class GeoTiffDriver:
             True if GeoTIFF file should be managed as a 'BIGTIFF' (required if the file will be above 4 GB).
             Defaults to false.
         is_tiled : bool, optional
-            True if the data should be tiled (default). False if the data should be stripped.
+            True if the mosaic should be tiled (default). False if the mosaic should be stripped.
         blocksize : 2-tuple, optional
-            Blocksize of the data blocks in the GeoTIFF file. Defaults to (512, 512).
+            Blocksize of the mosaic blocks in the GeoTIFF file. Defaults to (512, 512).
         n_bands : int, optional
             Number of bands in the GeoTIFF file. Defaults to 1.
         dtypes : dict or str, optional
             Data types used for de- or encoding (NumPy-style). Defaults to 'uint8'. It can either be one value (will
-            be used for all bands), or a dictionary mapping the band number with the respective data type.
+            be used for all bands), or a dictionary mapping the band number with the respective mosaic type.
         scale_factors : dict or number, optional
             Scale factor used for de- or encoding. Defaults to 1. It can either be one value (will be used for all
             bands), or a dictionary mapping the band number with the respective scale factor.
@@ -60,8 +60,8 @@ class GeoTiffDriver:
             Offset used for de- or encoding. Defaults to 0. It can either be one value (will be used for all bands),
             or a dictionary mapping the band number with the respective offset.
         nodatavals : dict or int, optional
-            No data value used for de- or encoding. Defaults to 255. It can either be one value (will be used for all
-            bands), or a dictionary mapping the band number with the respective no data value.
+            No mosaic value used for de- or encoding. Defaults to 255. It can either be one value (will be used for all
+            bands), or a dictionary mapping the band number with the respective no mosaic value.
         color_tbls : dict or gdal.ColorTable, optional
             GDAL color tables. Defaults to None. It can either be one value (will be used for all bands), or a
             dictionary mapping the band number with the respective color table.
@@ -71,7 +71,7 @@ class GeoTiffDriver:
         overwrite : bool, optional
             Flag if the file can be overwritten if it already exists (defaults to false).
         auto_decode : bool, optional
-            True if data should be decoded according to the information available in its metadata.
+            True if mosaic should be decoded according to the information available in its metadata.
             False if not (default).
 
         """
@@ -153,7 +153,7 @@ class GeoTiffDriver:
 
     @property
     def nodatavals(self):
-        """ list of numbers : No data values of the different bands. """
+        """ list of numbers : No mosaic values of the different bands. """
         return list(self._nodatavals.values())
 
     @property
@@ -173,8 +173,8 @@ class GeoTiffDriver:
 
     def _open(self):
         """
-        Helper function supporting the different data modes, i.e. either opening existing data or creating a new
-        data source.
+        Helper function supporting the different mosaic modes, i.e. either opening existing mosaic or creating a new
+        mosaic source.
 
         """
         if self.mode == 'r':
@@ -249,7 +249,7 @@ class GeoTiffDriver:
 
     def read(self, row=0, col=0, n_rows=None, n_cols=None, bands=None, decoder=None, decoder_kwargs=None):
         """
-        Read data from a GeoTIFF file.
+        Read mosaic from a GeoTIFF file.
 
         Parameters
         ----------
@@ -262,7 +262,7 @@ class GeoTiffDriver:
         n_cols : int, optional
             Number of columns to read (default is 1).
         bands : int or tuple or list, optional
-            Band numbers of the GeoTIFF file to read data from. Defaults to none, i.e. all available bands will be
+            Band numbers of the GeoTIFF file to read mosaic from. Defaults to none, i.e. all available bands will be
             used.
         decoder : function, optional
             Decoding function expecting a NumPy array as input.
@@ -271,7 +271,7 @@ class GeoTiffDriver:
 
         Returns
         -------
-        data : dict
+        mosaic : dict
             Dictionary mapping band numbers to NumPy arrays read from disk.
 
         """
@@ -304,7 +304,7 @@ class GeoTiffDriver:
 
     def write(self, data, row=0, col=0, encoder=None, encoder_kwargs=None):
         """
-        Writes data to a GeoTIFF file.
+        Writes mosaic to a GeoTIFF file.
 
         Parameters
         ----------
@@ -316,7 +316,7 @@ class GeoTiffDriver:
         col : int, optional
             Offset column number/index (defaults to 0).
         encoder : callable, optional
-            Function allowing to encode data before writing it to disk.
+            Function allowing to encode mosaic before writing it to disk.
         encoder_kwargs : dict, optional
             Keyword arguments for the encoder.
 
@@ -404,7 +404,7 @@ class GeoTiffDriver:
 
     def flush(self):
         """
-        Flush data on disk.
+        Flush mosaic on disk.
         """
         if self.src is not None:
             self.src.FlushCache()
@@ -453,7 +453,7 @@ def create_vrt_file(filepaths, vrt_filepath, shape, sref_wkt, geotrans, bands=(1
     band_attr_dict['offset'] = []
     band_attr_dict['dtype'] = []
     band_attr_dict['blocksize'] = []
-    with GeoTiffDriver(ref_filepath, 'r') as gt_driver:
+    with GeoTiffFile(ref_filepath, 'r') as gt_driver:
         for band in bands:
             b_idx = list(gt_driver.bands).index(band)
             band_attr_dict['nodataval'].append(gt_driver.nodatavals[b_idx])
@@ -503,6 +503,5 @@ def create_vrt_file(filepaths, vrt_filepath, shape, sref_wkt, geotrans, bands=(1
 
 
 if __name__ == '__main__':
-    filepath = r"D:\data\studies\s1_static_layers\simulations\norway\local_gamma_a\v1\local_gamma_a_std.tif"
-    GeoTiffDriver(filepath)
+    pass
 

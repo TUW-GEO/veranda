@@ -1,5 +1,5 @@
 """
-Some handy functions using GDAL to manage geospatial raster data.
+Some handy functions using GDAL to manage geospatial raster mosaic.
 
 """
 
@@ -44,7 +44,7 @@ GDAL_RESAMPLE_TYPE = {"nearst": gdal.GRA_NearestNeighbour,
 
 def dtype_np2gdal(datatype):
     """
-    Get GDAL data type from NumPy-style datatype.
+    Get GDAL mosaic type from NumPy-style datatype.
 
     Parameters
     ----------
@@ -54,7 +54,7 @@ def dtype_np2gdal(datatype):
     Returns
     -------
     gdal_datatype : str
-        Gdal data type.
+        Gdal mosaic type.
 
     """
     return NUMPY_TO_GDAL_DTYPE.get(datatype.lower())
@@ -88,12 +88,12 @@ def call_gdal_util(util_name, gdal_path=None, src_files=None, dst_file=None,
     ----------
     util_name : string
         pre-defined name of the utility
-        (e.g. "gdal_translate": convert raster data between different formats,
+        (e.g. "gdal_translate": convert raster mosaic between different formats,
         potentially performing some operations like subsettings, resampling,
         and rescaling pixels in the process.)
     src_files : string
         The source dataset name. It can be either file name,
-        URL of data source or subdataset name for multi-dataset files.
+        URL of mosaic source or subdataset name for multi-dataset files.
     dst_file : string
         The destination file name.
     gdal_path : string
@@ -204,7 +204,7 @@ def gen_qlook(src_file, dst_file=None, src_nodata=None, gdal_path=None,
 
     src_file: string (required)
         The source dataset name. It can be either file name (full path)
-        URL of data source or subdataset name for multi-dataset files.
+        URL of mosaic source or subdataset name for multi-dataset files.
     dst_file: string (optional)
         The destination file name (full path).
         if not provided the default of dst_file is src_file name+ '_qlook'
