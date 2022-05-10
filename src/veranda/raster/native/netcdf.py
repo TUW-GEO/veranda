@@ -562,7 +562,7 @@ class NetCdfXrFile:
     """
 
     def __init__(self, filepath, mode='r', data_variables=None, time_variables='time',
-                 scale_factors=1, offsets=0, nodatavals=255, dtypes='uint8', compression=None,
+                 scale_factors=1, offsets=0, nodatavals=127, dtypes='int8', compression=None,
                  chunksizes=None, geotrans=(0, 1, 0, 0, 0, 1), sref_wkt=None,
                  time_units="days since 1900-01-01 00:00:00", nc_format="NETCDF4_CLASSIC",
                  metadata=None, overwrite=True, auto_decode=False, engine='netcdf4'):
@@ -586,7 +586,7 @@ class NetCdfXrFile:
         nodatavals = self.__to_dict(nodatavals)
         dtypes = self.__to_dict(dtypes)
 
-        self._compression = dict()
+        self._compressions = dict()
         self._chunksizes = dict()
         self._scale_factors = dict()
         self._offsets = dict()
@@ -594,12 +594,12 @@ class NetCdfXrFile:
         self._dtypes = dict()
 
         for data_variable in self.data_variables:
-            self._compression[data_variable] = compressions.get(data_variable, dict())
+            self._compressions[data_variable] = compressions.get(data_variable, None)
             self._chunksizes[data_variable] = chunksizes.get(data_variable, None)
             self._scale_factors[data_variable] = scale_factors.get(data_variable, 1)
             self._offsets[data_variable] = offsets.get(data_variable, 0)
-            self._nodatavals[data_variable] = nodatavals.get(data_variable, 255)
-            self._dtypes[data_variable] = dtypes.get(data_variable, 'uint8')
+            self._nodatavals[data_variable] = nodatavals.get(data_variable, 127)
+            self._dtypes[data_variable] = dtypes.get(data_variable, 'int8')
 
         self._time_units = dict()
         time_variables = self.__to_iterable(time_variables)
@@ -624,31 +624,51 @@ class NetCdfXrFile:
             if not os.path.exists(self.filepath):
                 err_msg = f"File '{self.filepath}' does not exist."
                 raise FileNotFoundError(err_msg)
-            self.src = xr.open_dataset(self.filepath,
-                                       mask_and_scale=self.auto_decode,
-                                       engine=self._engine,
-                                       use_cftime=False,
-                                       decode_coords="all")
+            self.src = xr.open_mfdataset(self.filepath,
+                                         mask_and_scale=self.auto_decode,
+                                         engine=self._engine,
+                                         use_cftime=False,
+                                         decode_cf=True,
+                                         decode_coords="all")
 
             self.geotrans = tuple(self.src.rio.transform())
             self.sref_wkt = self.src.rio.crs
             self.metadata = self.src.attrs
-            self.data_variables = self.src.data_vars
-            for data_variable in self.data_variables:
-                self._scale_factors[data_variable] = self.src[data_variable].attrs.get('scale_factor', 1)
-                self._offsets[data_variable] = self.src[data_variable].attrs.get('add_offset', 0)
-                self._nodatavals[data_variable] = self.src[data_variable].attrs.get('_FillValue', None)
-                self._dtypes[data_variable] = self.src[data_variable].attrs.get('dtype', None)
-        elif self.mode in ['w', 'a']:
+            self._reset()
+        elif self.mode == 'w':
             self.src = ds
-            self.src.rio.write_crs(self.sref_wkt, inplace=True)
+            if self.sref_wkt is not None:
+                self.src.rio.write_crs(self.sref_wkt, inplace=True)
             self.src.rio.write_transform(Affine(*self.geotrans), inplace=True)
             self.src.attrs.update(self.metadata)
-            if self.data_variables is None:
-                self.data_variables = self.src.data_vars
+            self._reset()
+            n_rows, n_cols = len(ds['y']), len(ds['x'])
+            ds['x'] = self.geotrans[0] + \
+                   (0.5 + np.arange(n_cols)) * self.geotrans[1] + \
+                   (0.5 + np.arange(n_cols)) * self.geotrans[2]
+            ds['y'] = self.geotrans[3] + \
+                      (0.5 + np.arange(n_rows)) * self.geotrans[4] + \
+                      (0.5 + np.arange(n_rows)) * self.geotrans[5]
         else:
             err_msg = f"Mode '{self.mode}' not known."
             raise ValueError(err_msg)
+
+    def _reset(self):
+        if len(self.data_variables) == 0:
+            self.data_variables = [self.src[dvar].name for dvar in self.src.data_vars
+                                   if self.src[dvar].dims == ('time', 'y', 'x')]
+        for data_variable in self.data_variables:
+            ref_scale_factor = self._scale_factors.get(data_variable, 1)
+            self._scale_factors[data_variable] = self.src[data_variable].attrs.get('scale_factor', ref_scale_factor)
+            ref_offset = self._offsets.get(data_variable, 0)
+            self._offsets[data_variable] = self.src[data_variable].attrs.get('add_offset', ref_offset)
+            ref_nodataval = self._nodatavals.get(data_variable, 127)
+            self._nodatavals[data_variable] = self.src[data_variable].attrs.get('_FillValue', ref_nodataval)
+            ref_dtype = self._dtypes.get(data_variable, self.src[data_variable].dtype.name)
+            self._dtypes[data_variable] = ref_dtype
+            self._compressions[data_variable] = self._compressions.get(data_variable, None)
+            ref_chunksizes = self.src[data_variable].encoding.get('chunksizes', None) # TODO fix this workaround
+            self._chunksizes[data_variable] = self._chunksizes.get(data_variable, ref_chunksizes)
 
     def read(self, row=0, col=0, n_rows=None, n_cols=None, data_variables=None, decoder=None,
              decoder_kwargs=None):
@@ -688,6 +708,11 @@ class NetCdfXrFile:
         data = None
         for i, data_variable in enumerate(data_variables):
             data_sliced = self.src[data_variable][..., row: row + n_rows, col: col + n_cols]
+            chunksizes = self._chunksizes[data_variable]
+            if chunksizes is not None:
+                data_sliced = data_sliced.chunk({'time': chunksizes[0],
+                                                 'y': chunksizes[1],
+                                                 'x': chunksizes[2]})
             if decoder:
                 data_sliced = decoder(data_sliced,
                                       nodataval=self._nodatavals[data_variable],
@@ -730,17 +755,16 @@ class NetCdfXrFile:
                                                   dtype=self._dtypes[data_variable],
                                                   **encoder_kwargs)
             encoding_dv = dict()
-            encoding_dv.update(self._compression[data_variable])
+            compression = self._compressions[data_variable]
+            if compression is not None:
+                encoding_dv.update(compression)
             chunksizes = self._chunksizes[data_variable]
             if chunksizes is not None:
                 encoding_dv['chunksizes'] = chunksizes
-            encoding_dv['scale_factor'] = self._scale_factors[data_variable]
-            encoding_dv['add_offset'] = self._offsets[data_variable]
-            encoding_dv['_FillValue'] = self._nodatavals[data_variable]
-            encoding_dv['dtype'] = self._dtypes[data_variable]
-
             encoding[data_variable] = encoding_dv
 
+        for k, v in self._time_units.items():
+            encoding.update({k: {'units': v}})
         ds_write.to_netcdf(self.filepath, mode=self.mode, format=self.nc_format, engine=self._engine,
                            encoding=encoding, compute=compute, unlimited_dims=unlimited_dims)
 
@@ -760,7 +784,7 @@ class NetCdfXrFile:
             Dictionary mapping mosaic variables with the value of `arg`.
 
         """
-        if not isinstance(arg, dict) or isinstance(arg[arg.keys()[0]], dict):
+        if not isinstance(arg, dict) or (isinstance(arg, dict) and not isinstance(arg[list(arg.keys())[0]], dict)):
             arg_dict = dict()
             for data_variable in self.data_variables:
                 arg_dict[data_variable] = arg
