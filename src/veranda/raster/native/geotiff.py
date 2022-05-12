@@ -4,6 +4,7 @@ import numpy as np
 from osgeo import gdal
 import xml.etree.ElementTree as ET
 
+from veranda.utils import to_list
 from veranda.raster.gdalport import NUMPY_TO_GDAL_DTYPE, GDAL_TO_NUMPY_DTYPE
 
 
@@ -280,7 +281,7 @@ class GeoTiffFile:
         n_cols = self.shape[1] if n_cols is None else n_cols
         n_rows = self.shape[0] if n_rows is None else n_rows
         bands = bands or self.bands
-        bands = self.__to_iterable(bands)
+        bands = to_list(bands)
 
         data = dict()
         for band in bands:
@@ -380,27 +381,6 @@ class GeoTiffFile:
             arg_dict = arg
 
         return arg_dict
-
-    def __to_iterable(self, arg):
-        """
-        Converts non-iterable object to a list. If `arg` is already a list or tuple the same object is returned.
-
-        Parameters
-        ----------
-        arg : non-iterable or list or tuple
-            Non-iterable, which should be converted to a list.
-
-        Returns
-        -------
-        arg_list : list or tuple
-            List containing `arg` as a value.
-
-        """
-        if not isinstance(arg, (list, tuple)):
-            arg_list = [arg]
-        else:
-            arg_list = arg
-        return arg_list
 
     def flush(self):
         """

@@ -16,13 +16,18 @@ Test NetCDF I/O.
 """
 
 import os
+import shutil
 import unittest
-
 import numpy as np
 import pandas as pd
 import xarray as xr
-import dask.array as da
+from tempfile import mkdtemp
 
+from geospade.crs import SpatialRef
+from geospade.raster import Tile
+from geospade.raster import MosaicGeometry
+
+from veranda.raster.mosaic.netcdf import NetCdfReader, NetCdfWriter
 from veranda.raster.native.netcdf import NetCdf4File, NetCdfXrFile
 
 
@@ -36,11 +41,7 @@ class NetCdf4Test(unittest.TestCase):
         """
         Define test file.
         """
-        test_dir = os.path.join(os.path.dirname(
-            os.path.abspath(__file__)), 'temp')
-        if not os.path.isdir(test_dir):
-            os.makedirs(test_dir)
-        self.filepath = os.path.join(test_dir, 'test.nc')
+        self.filepath = os.path.join(mkdtemp(), 'test.nc')
 
     def test_read_write(self):
         """
@@ -234,11 +235,7 @@ class NetCdf4XrTest(unittest.TestCase):
         """
         Define test file.
         """
-        test_dir = os.path.join(os.path.dirname(
-            os.path.abspath(__file__)), 'temp')
-        if not os.path.isdir(test_dir):
-            os.makedirs(test_dir)
-        self.filepath = os.path.join(test_dir, 'test.nc')
+        self.filepath = os.path.join(mkdtemp(), 'test.nc')
 
     def test_read_write(self):
         """
@@ -367,6 +364,154 @@ class NetCdf4XrTest(unittest.TestCase):
         Remove test file.
         """
         os.remove(self.filepath)
+
+
+class NetCdfDataTest(unittest.TestCase):
+    """
+    Testing a NetCDF image stack.
+    """
+
+    def setUp(self):
+        """
+        Set up dummy mosaic set.
+        """
+        self.path = mkdtemp()
+        if not os.path.isdir(self.path):
+            os.makedirs(self.path)
+
+    def test_write_read_image_stack(self):
+        """
+        Test writing and reading an image stack.
+        """
+        num_files = 50
+        xsize = 60
+        ysize = 50
+        data_variable = 'mosaic'
+
+        ds_tile = Tile(ysize, xsize, sref=SpatialRef(4326))
+        ds_mosaic = MosaicGeometry.from_tile_list([ds_tile])
+
+        dims = ['time', 'y', 'x']
+        coords = {'time': pd.date_range('2000-01-01', periods=num_files),
+                  'y': ds_tile.y_coords,
+                  'x': ds_tile.x_coords}
+        data = np.random.randn(num_files, ysize, xsize)
+        ds = xr.Dataset({data_variable: (dims, data)}, coords=coords)
+        dst_filepath = os.path.join(self.path, "test.nc")
+
+        with NetCdfWriter.from_data(ds, dst_filepath, mosaic=ds_mosaic, file_dimension='time') as nc_writer:
+            nc_writer.export()
+            filepaths = list(set(nc_writer.file_register['filepath']))
+
+        with NetCdfReader.from_filepaths(filepaths) as nc_reader:
+            ts1 = nc_reader.select_px_window(0, 0, width=10, height=10, inplace=False)
+            ts1.read(data_variables=data_variable)
+            ts2 = nc_reader.select_px_window(10, 12, width=5, height=5, inplace=False)
+            ts2.read(data_variables=data_variable)
+
+        self.assertEqual(ts1.data[data_variable].shape, (num_files, 10, 10))
+        np.testing.assert_equal(ts1.data[data_variable], data[:, :10, :10])
+
+        self.assertEqual(ts2.data[data_variable].shape, (num_files, 5, 5))
+        np.testing.assert_equal(ts2.data[data_variable], data[:, 10:15, 12:17])
+
+    def test_read_decoded_image_stack(self):
+        """
+        Tests reading and decoding of an image stack.
+
+        """
+        num_files = 25
+        xsize = 60
+        ysize = 50
+        data_variables = ['data1', 'data2']
+
+        ds_tile = Tile(ysize, xsize, SpatialRef(4326))
+        ds_mosaic = MosaicGeometry.from_tile_list([ds_tile])
+
+        dims = ['time', 'y', 'x']
+        coords = {'time': pd.date_range('2000-01-01', periods=num_files),
+                  'y': ds_tile.y_coords,
+                  'x': ds_tile.x_coords}
+        data = np.ones((num_files, ysize, xsize))
+        attr1 = {'unit': 'dB', 'scale_factor': 2, 'add_offset': 3, 'fill_value': -9999}
+        attr2 = {'unit': 'dB', 'fill_value': -9999}
+        ds = xr.Dataset({data_variables[0]: (dims, data, attr1), data_variables[1]: (dims, data, attr2)}, coords=coords)
+        dst_filepath = os.path.join(self.path, "test.nc")
+
+        with NetCdfWriter.from_data(ds, dst_filepath, mosaic=ds_mosaic, file_dimension='time') as nc_writer:
+            nc_writer.export()
+            filepaths = list(set(nc_writer.file_register['filepath']))
+
+        with NetCdfReader.from_filepaths(filepaths) as nc_reader:
+            ts1 = nc_reader.select_px_window(0, 0, width=10, height=10, inplace=False)
+            ts1.read(data_variables=data_variables, auto_decode=True)
+            ts2 = nc_reader.select_px_window(10, 12, width=5, height=5, inplace=False)
+            ts2.read(data_variables=data_variables, auto_decode=True)
+            np.testing.assert_equal(ts1.data[data_variables[1]], data[:, :10, :10])
+            np.testing.assert_equal(ts2.data[data_variables[1]], data[:, 10:15, 12:17])
+
+        with NetCdfReader.from_filepaths(filepaths) as nc_reader:
+            ts1 = nc_reader.select_px_window(0, 0, width=10, height=10, inplace=False)
+            ts1.read(data_variables=data_variables, auto_decode=False)
+            ts2 = nc_reader.select_px_window(10, 12, width=5, height=5, inplace=False)
+            ts2.read(data_variables=data_variables, auto_decode=False)
+            np.testing.assert_equal(ts1.data[data_variables[0]], data[:, :10, :10])
+            np.testing.assert_equal(ts2.data[data_variables[0]], data[:, 10:15, 12:17])
+
+        data = data * 2. + 3.
+        with NetCdfReader.from_filepaths(filepaths) as nc_reader:
+            ts1 = nc_reader.select_px_window(0, 0, width=10, height=10, inplace=False)
+            ts1.read(data_variables=data_variables, auto_decode=True)
+            ts2 = nc_reader.select_px_window(10, 12, width=5, height=5, inplace=False)
+            ts2.read(data_variables=data_variables, auto_decode=True)
+            np.testing.assert_equal(ts1.data[data_variables[0]], data[:, :10, :10])
+            np.testing.assert_equal(ts2.data[data_variables[0]], data[:, 10:15, 12:17])
+
+    def test_write_selections(self):
+        """ Tests writing mosaic after some select operations have been applied. """
+        num_files = 10
+        xsize = 60
+        ysize = 50
+        layer_ids = [0, 5, 9]
+        data_variable = 'mosaic'
+
+        ds_tile = Tile(ysize, xsize, SpatialRef(4326), name=0)
+        ds_mosaic = MosaicGeometry.from_tile_list([ds_tile])
+
+        dims = ['time', 'y', 'x']
+        dates = pd.date_range('2000-01-01', periods=num_files)
+        coords = {'time': pd.date_range('2000-01-01', periods=num_files),
+                  'y': ds_tile.y_coords,
+                  'x': ds_tile.x_coords}
+        data = np.random.randn(num_files, ysize, xsize)
+        ds = xr.Dataset({'mosaic': (dims, data)}, coords=coords)
+        dst_filepath = os.path.join(self.path, "test.nc")
+        layers = dates[layer_ids]
+        with NetCdfWriter.from_data(ds, dst_filepath, mosaic=ds_mosaic, file_dimension='time') as nc_writer:
+            nc_writer.select_layers(layers, inplace=True)
+            ul_data = nc_writer.select_px_window(0, 0, height=25, width=30)
+            ur_data = nc_writer.select_px_window(0, 30, height=25, width=30)
+            ll_data = nc_writer.select_px_window(25, 0, height=25, width=30)
+            lr_data = nc_writer.select_px_window(25, 30, height=25, width=30)
+            nc_writer.write(ul_data.data)
+            nc_writer.write(ur_data.data)
+            nc_writer.write(ll_data.data)
+            nc_writer.write(lr_data.data)
+            filepaths = list(set(nc_writer.file_register['filepath']))
+
+        with NetCdfReader.from_filepaths(filepaths) as nc_reader:
+            ts1 = nc_reader.select_px_window(0, 0, width=10, height=10, inplace=False)
+            ts1.read(data_variables=data_variable)
+            ts2 = nc_reader.select_px_window(45, 55, width=5, height=5, inplace=False)
+            ts2.read(data_variables=data_variable)
+            np.testing.assert_equal(ts1.data[data_variable], data[layer_ids, :10, :10])
+            np.testing.assert_equal(ts2.data[data_variable], data[layer_ids, 45:, 55:])
+
+    def tearDown(self):
+        """
+        Remove test file.
+        """
+        shutil.rmtree(self.path)
 
 
 if __name__ == '__main__':

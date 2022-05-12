@@ -1,9 +1,12 @@
+import os
 import copy
 import gc
 import abc
 import warnings
 import rioxarray  # this import is needed as an extension for xarray
 import xarray as xr
+import pandas as pd
+import numpy as np
 from affine import Affine
 
 from geospade.tools import any_geom2ogr_geom
@@ -102,15 +105,15 @@ class RasterData(metaclass=abc.ABCMeta):
 
         """
         self._file_register = file_register
-        self._drivers = dict()
+        self._files = dict()
         self._mosaic = mosaic
         self._data = data
         self._data_geom = None if data is None else self.raster_geom_from_data(data, sref=mosaic.sref)
         self._file_dim = file_dimension
         self._file_coords = [self._file_dim] if file_coords is None else file_coords
 
-        if 'driver_id' not in self._file_register.columns:
-            self._file_register['driver_id'] = [None] * len(self._file_register)
+        if 'file_id' not in self._file_register.columns:
+            self._file_register['file_id'] = [None] * len(self._file_register)
 
     @property
     def mosaic(self):
@@ -125,7 +128,7 @@ class RasterData(metaclass=abc.ABCMeta):
     @property
     def n_layers(self):
         """ int : Number of layers. """
-        return max(self._file_register['layer_id']) + 1
+        return max(self._file_register[self._file_dim])
 
     @property
     def n_tiles(self):
@@ -151,7 +154,7 @@ class RasterData(metaclass=abc.ABCMeta):
     @property
     def file_register(self):
         """ pd.Dataframe : File register of the raster mosaic object. """
-        return self._file_register.drop(columns=['driver_id'])
+        return self._file_register.drop(columns=['file_id'])
 
     @property
     def data(self):
@@ -290,9 +293,9 @@ class RasterData(metaclass=abc.ABCMeta):
             new_raster_data = copy.deepcopy(self)
             return new_raster_data.select_layers(layer_ids, inplace=True)
 
-        layer_ids_close = set(self._file_register['layer_id']) - set(layer_ids)
+        layer_ids_close = set(self._file_register[self._file_dim]) - set(layer_ids)
         self.close(layer_ids=layer_ids_close, clear_ram=False)
-        self._file_register = self._file_register[self._file_register['layer_id'].isin(layer_ids)]
+        self._file_register = self._file_register[self._file_register[self._file_dim].isin(layer_ids)]
 
         return self
 
@@ -331,14 +334,14 @@ class RasterData(metaclass=abc.ABCMeta):
             return new_raster_data.select_px_window(row, col, height=height, width=width, inplace=True)
 
         if self._data_geom is not None:
-            self._data_geom.slice_by_rc(row, col, height=height, width=width, inplace=True, name=0)
+            self._data_geom.slice_by_rc(row, col, height=height, width=width, inplace=True, name='0')
             if self._data_geom is None:
                 wrn_msg = "Pixels are outside the extent of the raster mosaic."
                 warnings.warn(wrn_msg)
 
         if len(self._mosaic.all_tiles) == 1:
             tile_oi = self._mosaic.all_tiles[0]
-            tile_oi.slice_by_rc(row, col, height=height, width=width, inplace=True, name=0)
+            tile_oi.slice_by_rc(row, col, height=height, width=width, inplace=True, name='0')
             tile_oi.active = True
             self._mosaic.from_tile_list([tile_oi], inplace=True)
 
@@ -373,7 +376,7 @@ class RasterData(metaclass=abc.ABCMeta):
 
         if self._data_geom is not None:
             row, col = self._data_geom.xy2rc(x, y, sref=sref)
-            self._data_geom.slice_by_rc(row, col, inplace=True, name=0)
+            self._data_geom.slice_by_rc(row, col, inplace=True, name='0')
             if self._data_geom is None:
                 wrn_msg = "Coordinates are outside the spatial extent of the raster mosaic."
                 warnings.warn(wrn_msg)
@@ -381,7 +384,7 @@ class RasterData(metaclass=abc.ABCMeta):
         tile_oi = self._mosaic.xy2tile(x, y, sref=sref)
         if tile_oi is not None:
             row, col = tile_oi.xy2rc(x, y, sref=sref)
-            tile_oi.slice_by_rc(row, col, inplace=True, name=0)
+            tile_oi.slice_by_rc(row, col, inplace=True, name='0')
             tile_oi.active = True
             self._mosaic.from_tile_list([tile_oi], inplace=True)
             self._file_register = self._file_register[self._file_register['geom_id'] == tile_oi.parent_root.name]
@@ -446,13 +449,14 @@ class RasterData(metaclass=abc.ABCMeta):
             return new_raster_data.select_polygon(polygon, sref=sref, apply_mask=apply_mask, inplace=True)
 
         if self._data_geom is not None:
-            self._data_geom.slice_by_geom(polygon, inplace=True)
+            self._data_geom.slice_by_geom(polygon, inplace=True, name='0')
             if self._data_geom is None:
                 wrn_msg = "Polygon is outside the spatial extent of the raster mosaic."
                 warnings.warn(wrn_msg)
 
         polygon = any_geom2ogr_geom(polygon, sref=sref)
-        sliced_mosaic = self._mosaic.slice_by_geom(polygon, active_only=False, apply_mask=apply_mask, inplace=False)
+        sliced_mosaic = self._mosaic.slice_by_geom(polygon, active_only=False, apply_mask=apply_mask, inplace=False,
+                                                   name='0')
         if sliced_mosaic is None:
             wrn_msg = "Polygon is outside the spatial extent of the raster mosaic files."
             warnings.warn(wrn_msg)
@@ -478,7 +482,8 @@ class RasterData(metaclass=abc.ABCMeta):
                 xrars[dvar] = data[dvar][..., min_row: max_row + 1, min_col:max_col + 1]
             data = xr.Dataset(xrars)
 
-            data = data.sel({self._file_dim: list(set(self._file_register[self._file_dim]))})
+            if self._file_dim in data.coords:
+                data = data.sel({self._file_dim: list(set(self._file_register[self._file_dim]))})
 
         return data
 
@@ -502,17 +507,17 @@ class RasterData(metaclass=abc.ABCMeta):
 
         """
         if layer_ids is not None:
-            bool_idxs = self._file_register['layer_id'].isin(layer_ids)
-            driver_ids = set(self._file_register.loc[bool_idxs, 'driver_id'])
-            self._file_register.loc[bool_idxs, 'driver_id'] = None
-            driver_ids = list(set(self._drivers.keys()) - driver_ids)
+            bool_idxs = self._file_register[self._file_dim].isin(layer_ids)
+            file_ids = set(self._file_register.loc[bool_idxs, 'file_id'])
+            self._file_register.loc[bool_idxs, 'file_id'] = None
+            file_ids = list(set(self._files.keys()) - file_ids)
         else:
-            self._file_register['driver_id'] = None
-            driver_ids = list(self._drivers.keys())
+            self._file_register['file_id'] = None
+            file_ids = list(self._files.keys())
 
-        for driver_id in driver_ids:
-            self._drivers[driver_id].close()
-            del self._drivers[driver_id]
+        for file_id in file_ids:
+            self._files[file_id].close()
+            del self._files[file_id]
 
         if clear_ram:
             self._data = None
@@ -615,7 +620,8 @@ class RasterDataReader(RasterData):
 
 class RasterDataWriter(RasterData):
     """ Allows to write and modify a stack of raster mosaic. """
-    def __init__(self, file_register, mosaic, data=None, file_dimension='idx', file_coords=None):
+    def __init__(self, mosaic, file_register=None, data=None, file_dimension='layer_id', file_coords=None, dirpath=None,
+                 fn_pattern='{layer_id}.xyz', fn_formatter=None):
         """
         Constructor of `RasterDataWriter`.
 
@@ -644,6 +650,41 @@ class RasterDataWriter(RasterData):
             `file_dimension` are used.
 
         """
+        fn_formatter = fn_formatter or dict()
+        if file_register is None and data is None:
+            err_msg = "Either a file register ('file_register') or an xarray dataset ('data') has to be provided."
+            raise ValueError(err_msg)
+        elif file_register is None and data is not None:
+            layers = data[file_dimension]
+            file_register_dict = dict()
+            file_register_dict[file_dimension] = layers
+            file_register = pd.DataFrame(file_register_dict)
+
+        n_entries = len(file_register)
+        if 'geom_id' not in file_register.columns:
+            file_register['geom_id'] = ['0'] * n_entries
+
+        if file_dimension not in file_register.columns:
+            if data is not None:
+                layers = data[file_dimension]
+                n_layers = len(layers)
+                file_register = pd.DataFrame(np.repeat(file_register.values, n_layers, axis=0),
+                                             columns=file_register.columns)
+                file_register[file_dimension] = np.repeat(layers, n_entries, axis=0)
+            else:
+                layers = list(range(1, n_entries + 1))
+                file_register[file_dimension] = layers
+
+        if 'filepath' not in file_register.columns:
+            dirpath = dirpath or os.getcwd()
+            filepaths = []
+            for _, row in file_register.iterrows():
+                for k, fun in fn_formatter.items():
+                    row[k] = fun(row[k])
+                filename = fn_pattern.format(**row)
+                filepaths.append(os.path.join(dirpath, filename))
+            file_register['filepath'] = filepaths
+
         super().__init__(file_register, mosaic, data=data, file_dimension=file_dimension, file_coords=file_coords)
 
     @abc.abstractmethod
@@ -686,7 +727,7 @@ class RasterDataWriter(RasterData):
         pass
 
     @classmethod
-    def from_xarray(cls, data, file_register, mosaic=None):
+    def from_xarray(cls, data, file_register, mosaic=None, **kwargs):
         """
         Converts an xarray dataset and a file register to a `RasterDataWrite` instance.
 
@@ -712,9 +753,10 @@ class RasterDataWriter(RasterData):
         RasterDataWriter
 
         """
-        tile = cls.raster_geom_from_data(data, name=0)
+        sref = mosaic.sref if mosaic is not None else None
+        tile = cls.raster_geom_from_data(data, sref=sref, name=0)
         mosaic = mosaic or MosaicGeometry([tile], check_consistency=False)
-        return cls(file_register, mosaic, data=data)
+        return cls(mosaic, file_register=file_register, data=data, **kwargs)
 
     def load(self, *args, **kwargs):
         """ Loads mosaic from RAM. """

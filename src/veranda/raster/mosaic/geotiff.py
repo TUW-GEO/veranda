@@ -13,6 +13,7 @@ from geospade.crs import SpatialRef
 from geospade.raster import Tile
 from geospade.raster import MosaicGeometry
 
+from veranda.utils import to_list
 from veranda.raster.native.geotiff import GeoTiffFile
 from veranda.raster.native.geotiff import create_vrt_file
 from veranda.raster.gdalport import GDAL_TO_NUMPY_DTYPE
@@ -21,7 +22,7 @@ from veranda.raster.mosaic.base import RasterDataReader, RasterDataWriter, Raste
 PROC_OBJS = {}
 
 
-def read_init(fr, am, sm, ad, dc, dk):
+def read_init(fr, am, sm, ad, dc, dk, fd):
     """ Helper method for setting the entries of global variable `PROC_OBJS` to be available during multiprocessing. """
     PROC_OBJS['global_file_register'] = fr
     PROC_OBJS['access_map'] = am
@@ -29,6 +30,7 @@ def read_init(fr, am, sm, ad, dc, dk):
     PROC_OBJS['auto_decode'] = ad
     PROC_OBJS['decoder'] = dc
     PROC_OBJS['decoder_kwargs'] = dk
+    PROC_OBJS['file_dimension'] = fd
 
 
 class GeoTiffAccess(RasterAccess):
@@ -74,11 +76,11 @@ class GeoTiffAccess(RasterAccess):
         return min_row, min_col, n_rows, n_cols
 
 
-class GeoTiffDataReader(RasterDataReader):
+class GeoTiffReader(RasterDataReader):
     """ Allows to read and modify a stack of GeoTIFF mosaic. """
     def __init__(self, file_register, mosaic, file_dimension='layer_id', file_coords=None):
         """
-        Constructor of `GeoTiffDataReader`.
+        Constructor of `GeoTiffReader`.
 
         Parameters
         ----------
@@ -104,12 +106,13 @@ class GeoTiffDataReader(RasterDataReader):
         super().__init__(file_register, mosaic, file_dimension=file_dimension, file_coords=file_coords)
 
         ref_filepath = self._file_register['filepath'].iloc[0]
-        with GeoTiffFile(ref_filepath, 'r') as gt_driver:
-            self.dtypes = gt_driver.dtypes
-            self.nodatavals = gt_driver.nodatavals
+        with GeoTiffFile(ref_filepath, 'r') as gt_file:
+            self.dtypes = gt_file.dtypes
+            self.nodatavals = gt_file.nodatavals
 
     @classmethod
-    def from_filepaths(cls, filepaths, mosaic_class=MosaicGeometry, mosaic_kwargs=None, tile_kwargs=None):
+    def from_filepaths(cls, filepaths, mosaic_class=MosaicGeometry, mosaic_kwargs=None, tile_kwargs=None,
+                       file_dimension='layer_id', **kwargs):
         """
         Creates a `GeoTiffDataReader` instance as one stack of GeoTIFF files.
 
@@ -127,7 +130,7 @@ class GeoTiffDataReader(RasterDataReader):
 
         Returns
         -------
-        GeoTiffDataReader
+        GeoTiffReader
 
         """
         mosaic_kwargs = mosaic_kwargs or dict()
@@ -136,24 +139,25 @@ class GeoTiffDataReader(RasterDataReader):
         n_filepaths = len(filepaths)
         file_register_dict = dict()
         file_register_dict['filepath'] = filepaths
-        file_register_dict['geom_id'] = [0] * n_filepaths
-        file_register_dict['layer_id'] = list(range(n_filepaths))
+        file_register_dict['geom_id'] = ['0'] * n_filepaths
+        file_register_dict[file_dimension] = list(range(1, n_filepaths + 1))
         file_register = pd.DataFrame(file_register_dict)
 
         ref_filepath = filepaths[0]
-        with GeoTiffFile(ref_filepath, 'r') as gt_driver:
-            sref_wkt = gt_driver.sref_wkt
-            geotrans = gt_driver.geotrans
-            n_rows, n_cols = gt_driver.shape
+        with GeoTiffFile(ref_filepath, 'r') as gt_file:
+            sref_wkt = gt_file.sref_wkt
+            geotrans = gt_file.geotrans
+            n_rows, n_cols = gt_file.shape
 
         tile_class = mosaic_class.get_tile_class()
-        tile = tile_class(n_rows, n_cols, sref=SpatialRef(sref_wkt), geotrans=geotrans, name=1, **tile_kwargs)
+        tile = tile_class(n_rows, n_cols, sref=SpatialRef(sref_wkt), geotrans=geotrans, name='0', **tile_kwargs)
         mosaic_geom = mosaic_class.from_tile_list([tile], check_consistency=False, **mosaic_kwargs)
 
-        return cls(file_register, mosaic_geom)
+        return cls(file_register, mosaic_geom, file_dimension=file_dimension, **kwargs)
 
     @classmethod
-    def from_mosaic_filepaths(cls, filepaths, mosaic_class=MosaicGeometry, mosaic_kwargs=None):
+    def from_mosaic_filepaths(cls, filepaths, mosaic_class=MosaicGeometry, mosaic_kwargs=None,
+                              file_dimension='layer_id', **kwargs):
         """
         Creates a `GeoTiffDataReader` instance as multiple stacks of GeoTIFF files.
 
@@ -169,7 +173,7 @@ class GeoTiffDataReader(RasterDataReader):
 
         Returns
         -------
-        GeoTiffDataReader
+        GeoTiffReader
 
         """
         mosaic_kwargs = mosaic_kwargs or dict()
@@ -182,11 +186,11 @@ class GeoTiffDataReader(RasterDataReader):
         tile_idx = 0
         tile_class = mosaic_class.get_tile_class()
         for filepath in filepaths:
-            with GeoTiffFile(filepath, 'r') as gt_driver:
-                sref_wkt = gt_driver.sref_wkt
-                geotrans = gt_driver.geotrans
-                n_rows, n_cols = gt_driver.shape
-            curr_tile = tile_class(n_rows, n_cols, sref=SpatialRef(sref_wkt), geotrans=geotrans, name=tile_idx)
+            with GeoTiffFile(filepath, 'r') as gt_file:
+                sref_wkt = gt_file.sref_wkt
+                geotrans = gt_file.geotrans
+                n_rows, n_cols = gt_file.shape
+            curr_tile = tile_class(n_rows, n_cols, sref=SpatialRef(sref_wkt), geotrans=geotrans, name=str(tile_idx))
             curr_tile_idx = None
             for tile in tiles:
                 if curr_tile == tile:
@@ -198,18 +202,18 @@ class GeoTiffDataReader(RasterDataReader):
                 tile_idx += 1
 
             geom_ids.append(curr_tile_idx)
-            layer_id = sum(np.array(geom_ids) == curr_tile_idx)
+            layer_id = sum(np.array(geom_ids) == curr_tile_idx) + 1
             layer_ids.append(layer_id)
 
         file_register_dict['geom_id'] = geom_ids
-        file_register_dict['layer_id'] = layer_ids
+        file_register_dict[file_dimension] = layer_ids
         file_register = pd.DataFrame(file_register_dict)
 
         mosaic_geom = mosaic_class.from_tile_list(tiles, check_consistency=False, **mosaic_kwargs)
 
-        return cls(file_register, mosaic_geom)
+        return cls(file_register, mosaic_geom, file_dimension=file_dimension, **kwargs)
 
-    def read(self, bands=(1,), band_names=None, engine='vrt', n_cores=1,
+    def read(self, bands=1, band_names=None, engine='vrt', n_cores=1,
              auto_decode=False, decoder=None, decoder_kwargs=None):
         """
         Reads mosaic from disk.
@@ -238,10 +242,12 @@ class GeoTiffDataReader(RasterDataReader):
             Keyword arguments for the decoder.
 
         """
+        bands = to_list(bands)
+        band_names = to_list(band_names)
         new_tile = Tile.from_extent(self._mosaic.outer_extent, sref=self._mosaic.sref,
                                     x_pixel_size=self._mosaic.x_pixel_size,
                                     y_pixel_size=self._mosaic.y_pixel_size,
-                                    name=0)
+                                    name='0')
         shm_map = dict()
         for band in bands:
             np_dtype = np.dtype(self.dtypes[band - 1])
@@ -307,7 +313,8 @@ class GeoTiffDataReader(RasterDataReader):
         global_file_register = self._file_register
 
         with Pool(n_cores, initializer=read_init, initargs=(global_file_register, access_map, shm_map,
-                                                            auto_decode, decoder, decoder_kwargs)) as p:
+                                                            auto_decode, decoder, decoder_kwargs,
+                                                            self._file_dim)) as p:
             p.map(read_vrt_stack, access_map.keys())
 
     def __read_parallel(self, access_map, shm_map, n_cores=1,
@@ -336,7 +343,8 @@ class GeoTiffDataReader(RasterDataReader):
         global_file_register = self._file_register
 
         with Pool(n_cores, initializer=read_init, initargs=(global_file_register, access_map, shm_map,
-                                                            auto_decode, decoder, decoder_kwargs)) as p:
+                                                            auto_decode, decoder, decoder_kwargs,
+                                                            self._file_dim)) as p:
             p.map(read_single_files, global_file_register.index)
 
     def _to_xarray(self, data, band_names=None):
@@ -360,10 +368,7 @@ class GeoTiffDataReader(RasterDataReader):
 
         coord_dict = dict()
         for coord in self._file_coords:
-            if coord == 'layer_id':
-                coord_dict[coord] = range(0, self.n_layers)
-            else:
-                coord_dict[coord] = self._file_register[coord]
+            coord_dict[coord] = self._file_register[coord]
         coord_dict['x'] = self._data_geom.x_coords
         coord_dict['y'] = self._data_geom.y_coords
 
@@ -379,12 +384,12 @@ class GeoTiffDataReader(RasterDataReader):
         return xrds
 
 
-class GeoTiffDataWriter(RasterDataWriter):
-    """ Allows to write and modify a stack of GeoTIFF mosaic. """
+class GeoTiffWriter(RasterDataWriter):
+    """ Allows to write and modify a stack of GeoTIFF files. """
     def __init__(self, mosaic, file_register=None, data=None, file_dimension='layer_id', file_coords=None, dirpath=None,
-                 file_naming_pattern='{layer_id}.tif'):
+                 fn_pattern='{layer_id}.tif', fn_formatter=None):
         """
-        Constructor of `GeoTiffDataWriter`.
+        Constructor of `GeoTiffWriter`.
 
         Parameters
         ----------
@@ -414,42 +419,15 @@ class GeoTiffDataWriter(RasterDataWriter):
         dirpath : str, optional
             Directory path to the folder where the GeoTIFF files should be written to. Defaults to none, i.e. the
             current working directory is used.
-        file_naming_pattern : str, optional
+        fn_pattern : str, optional
             Pattern for the filename of the new GeoTIFF files. To fill in specific parts of the new file name with
             information from the file register, you can specify the respective file register column names in curly
             brackets and add them to the pattern string as desired. Defaults to '{layer_id}.tif'.
 
         """
 
-        if file_register is None and data is None:
-            err_msg = "Either a file register ('file_register') or an xarray dataset ('mosaic') has to be provided."
-            raise ValueError(err_msg)
-
-        if file_register is None:
-            n_layers = len(data[file_dimension])
-            layer_ids = range(n_layers)
-            file_register_dict = dict()
-            file_register_dict['layer_id'] = layer_ids
-            file_register = pd.DataFrame(file_register_dict)
-
-        if data is not None and file_dimension not in file_register:
-            file_register[file_dimension] = data[file_dimension]
-
-        n_entries = len(file_register)
-        if 'layer_id' not in file_register.columns:
-            layer_ids = range(n_entries)
-            file_register['layer_id'] = layer_ids
-
-        if 'geom_id' not in file_register.columns:
-            file_register['geom_id'] = [0] * n_entries
-
-        if 'filepath' not in file_register.columns:
-            dirpath = dirpath or os.getcwd()
-            filenames = [file_naming_pattern.format(**row) for _, row in file_register.iterrows()]
-            filepaths = [os.path.join(dirpath, filename) for filename in filenames]
-            file_register['filepath'] = filepaths
-
-        super().__init__(file_register, mosaic, data=data, file_dimension=file_dimension, file_coords=file_coords)
+        super().__init__(mosaic, file_register=file_register, data=data, file_dimension=file_dimension,
+                         file_coords=file_coords, dirpath=dirpath, fn_pattern=fn_pattern, fn_formatter=fn_formatter)
 
     def write(self, data, encoder=None, encoder_kwargs=None, overwrite=False, **kwargs):
         """
@@ -471,7 +449,6 @@ class GeoTiffDataWriter(RasterDataWriter):
 
         band_names = list(data.data_vars)
         n_bands = len(band_names)
-        bands = range(1, n_bands + 1)
         nodatavals = dict()
         scale_factors = dict()
         offsets = dict()
@@ -482,29 +459,29 @@ class GeoTiffDataWriter(RasterDataWriter):
             scale_factors[i + 1] = self._data[band_name].attrs.get('scale_factor', 1)
             offsets[i + 1] = self._data[band_name].attrs.get('add_offset', 0)
 
-        for i, entry in self._file_register.iterrows():
-            filepath = entry['filepath']
-            layer_id = entry.get('layer_id')
-            geom_id = entry.get('geom_id', 0)
-            file_coord = entry.get(self._file_dim, layer_id)
+        for filepath, file_group in self._file_register.groupby('filepath'):
+            geom_id = file_group.iloc[0].get('geom_id', '0')
+            file_coords = list(file_group[self._file_dim])
             tile = self._mosaic[geom_id]
             if not tile.intersects(data_geom):
                 continue
-            driver_id = entry.get('driver_id', None)
-            if driver_id is None:
-                gt_driver = GeoTiffFile(filepath, mode='w', geotrans=tile.geotrans, sref_wkt=tile.sref.wkt,
+            file_id = file_group.iloc[0].get('file_id', None)
+            if file_id is None:
+                gt_file = GeoTiffFile(filepath, mode='w', geotrans=tile.geotrans, sref_wkt=tile.sref.wkt,
                                         shape=tile.shape, n_bands=n_bands, dtypes=dtypes, scale_factors=scale_factors,
                                         offsets=offsets, nodatavals=nodatavals)
-                driver_id = len(list(self._drivers.keys())) + 1
-                self._drivers[driver_id] = gt_driver
-                self._file_register.loc[i, 'driver_id'] = driver_id
+                file_id = len(list(self._files.keys())) + 1
+                self._files[file_id] = gt_file
+                self._file_register.loc[file_group.index, 'file_id'] = file_id
 
-            gt_driver = self._drivers[driver_id]
-            out_tile = data_geom.slice_by_geom(tile, inplace=False)
-            gt_access = GeoTiffAccess(out_tile, tile, src_root_raster_geom=data_geom)
-            xrds = data.sel(**{self._file_dim: file_coord})
+            gt_file = self._files[file_id]
+            tile_write = data_geom.slice_by_geom(tile, inplace=False, name='0')
+            gt_access = GeoTiffAccess(tile_write, tile, src_root_raster_geom=data_geom)
+            xrds = data.sel(**{self._file_dim: file_coords})
             data_write = xrds[band_names].to_array().data
-            gt_driver.write(data_write[..., gt_access.src_row_slice, gt_access.src_col_slice],
+            gt_file.write(data_write[...,
+                                     gt_access.src_row_slice,
+                                     gt_access.src_col_slice].reshape((-1, tile_write.n_rows, tile_write.n_cols)),
                             row=gt_access.dst_window[0], col=gt_access.dst_window[1],
                             encoder=encoder, encoder_kwargs=encoder_kwargs)
 
@@ -538,17 +515,26 @@ class GeoTiffDataWriter(RasterDataWriter):
 
         bands = range(1, len(band_names) + 1)
         n_bands = len(bands)
-        for i, entry in self._file_register.iterrows():
-            filepath = entry['filepath']
-            layer_id = entry.get('layer_id')
-            geom_id = entry.get('geom_id', 0)
-            tile = self._mosaic[geom_id] if apply_tiling else self._data_geom
+        for filepath, file_group in self._file_register.groupby('filepath'):
+            geom_id = file_group.iloc[0].get('geom_id', '0')
+            file_coords = list(file_group[self._file_dim])
+            xrds = self._data.sel(**{self._file_dim: file_coords})
+            data_write = xrds[band_names].to_array().data
+            if apply_tiling:
+                tile = self._mosaic[geom_id]
+                if not tile.intersects(self._data_geom):
+                    continue
+                tile_write = self._data_geom.slice_by_geom(tile, inplace=False, name='0')
+                gt_access = GeoTiffAccess(tile_write, tile, src_root_raster_geom=self._data_geom)
+                data_write = data_write[..., gt_access.src_row_slice, gt_access.src_col_slice]
+            else:
+                tile_write = self._data_geom
 
-            with GeoTiffFile(filepath, mode='w', geotrans=tile.geotrans, sref_wkt=tile.sref.wkt,
-                             shape=tile.shape, n_bands=n_bands, dtypes=dtypes, scale_factors=scale_factors,
-                             offsets=offsets, nodatavals=nodatavals) as gt_driver:
-                xrds = self._data[{self._file_dim: layer_id}]
-                gt_driver.write(xrds[band_names].to_array().data, encoder=encoder, encoder_kwargs=encoder_kwargs)
+            with GeoTiffFile(filepath, mode='w', geotrans=tile_write.geotrans, sref_wkt=tile_write.sref.wkt,
+                             shape=tile_write.shape, n_bands=n_bands, dtypes=dtypes, scale_factors=scale_factors,
+                             offsets=offsets, nodatavals=nodatavals) as gt_file:
+                gt_file.write(data_write.reshape((-1, tile_write.n_rows, tile_write.n_cols)),
+                              encoder=encoder, encoder_kwargs=encoder_kwargs)
 
 
 def read_vrt_stack(geom_id):
@@ -568,12 +554,13 @@ def read_vrt_stack(geom_id):
     auto_decode = PROC_OBJS['auto_decode']
     decoder = PROC_OBJS['decoder']
     decoder_kwargs = PROC_OBJS['decoder_kwargs']
+    file_dimension = PROC_OBJS['file_dimension']
 
     gt_access = access_map[geom_id]
     bands = list(shm_map.keys())
     n_bands = len(bands)
     file_register = global_file_register.loc[global_file_register['geom_id'] == geom_id]
-    layer_ids = file_register['layer_id']
+    layer_ids = file_register[file_dimension]
 
     path = tempfile.gettempdir()
     date_str = datetime.utcnow().strftime("%Y%m%d%H%M%S")
@@ -586,7 +573,7 @@ def read_vrt_stack(geom_id):
 
     src = gdal.Open(vrt_filepath, gdal.GA_ReadOnly)
     vrt_data = src.ReadAsArray(*gt_access.gdal_args)
-    stack_idxs = np.array(layer_ids)
+    stack_idxs = np.array(layer_ids) - 1
     for band in bands:
         band_data = vrt_data[(band - 1)::n_bands, ...]
         scale_factor = src.GetRasterBand(band).GetScale()
@@ -626,9 +613,10 @@ def read_single_files(file_idx):
     auto_decode = PROC_OBJS['auto_decode']
     decoder = PROC_OBJS['decoder']
     decoder_kwargs = PROC_OBJS['decoder_kwargs']
+    file_dimension = PROC_OBJS['file_dimension']
 
     file_entry = global_file_register.loc[file_idx]
-    layer_id = file_entry['layer_id']
+    layer_id = file_entry[file_dimension]
     geom_id = file_entry['geom_id']
     filepath = file_entry['filepath']
     gt_access = access_map[geom_id]
