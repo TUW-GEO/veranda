@@ -1,4 +1,3 @@
-import os
 import xarray as xr
 import numpy as np
 import pandas as pd
@@ -55,15 +54,15 @@ class NetCdfReader(RasterDataReader):
     @classmethod
     def from_filepaths(cls, filepaths, mosaic_class=MosaicGeometry, mosaic_kwargs=None, tile_kwargs=None):
         """
-        Creates a `NetCdf4Reader` instance as one stack of NetCDF files.
+        Creates a `NetCdfReader` instance as one stack of NetCDF files.
 
         Parameters
         ----------
         filepaths : list of str
             List of full system paths to a NetCDF file.
         mosaic_class : geospade.raster.MosaicGeometry, optional
-            Mosaic class used to manage the spatial properties of the file stack. If None, the most generic mosaic will be
-            used by default. The initialised mosaic will only contain one tile.
+            Mosaic class used to manage the spatial properties of the file stack. If None, the most generic mosaic will
+            be used by default. The initialised mosaic will only contain one tile.
         mosaic_kwargs : dict, optional
             Additional arguments for initialising `mosaic_class`.
         tile_kwargs : dict, optional
@@ -80,7 +79,7 @@ class NetCdfReader(RasterDataReader):
         n_filepaths = len(filepaths)
         file_register_dict = dict()
         file_register_dict['filepath'] = filepaths
-        file_register_dict['geom_id'] = ['0'] * n_filepaths
+        file_register_dict['tile_id'] = ['0'] * n_filepaths
         file_register_dict['layer_id'] = list(range(n_filepaths))
         file_register = pd.DataFrame(file_register_dict)
 
@@ -99,7 +98,7 @@ class NetCdfReader(RasterDataReader):
     @classmethod
     def from_mosaic_filepaths(cls, filepaths, mosaic_class=MosaicGeometry, mosaic_kwargs=None):
         """
-        Creates a `NetCdf4Reader` instance as multiple stacks of NetCDF files.
+        Creates a `NetCdfReader` instance as multiple stacks of NetCDF files.
 
         Parameters
         ----------
@@ -120,7 +119,7 @@ class NetCdfReader(RasterDataReader):
         file_register_dict = dict()
         file_register_dict['filepath'] = filepaths
 
-        geom_ids = []
+        tile_ids = []
         layer_ids = []
         tiles = []
         tile_idx = 0
@@ -141,11 +140,11 @@ class NetCdfReader(RasterDataReader):
                 curr_tile_idx = tile_idx
                 tile_idx += 1
 
-            geom_ids.append(curr_tile_idx)
-            layer_id = sum(np.array(geom_ids) == curr_tile_idx)
+            tile_ids.append(curr_tile_idx)
+            layer_id = sum(np.array(tile_ids) == curr_tile_idx)
             layer_ids.append(layer_id)
 
-        file_register_dict['geom_id'] = geom_ids
+        file_register_dict['tile_id'] = tile_ids
         file_register_dict['layer_id'] = layer_ids
         file_register = pd.DataFrame(file_register_dict)
 
@@ -156,28 +155,22 @@ class NetCdfReader(RasterDataReader):
     def read(self, data_variables=None, engine='netcdf4', parallel=True, auto_decode=False,
              decoder=None, decoder_kwargs=None):
         """
-        Reads mosaic from disk.
+        Reads NetCdf data from disk and assigns it to the class.
 
         Parameters
         ----------
-        bands : tuple, optional
-            The GeoTIFF bands of interest. Defaults to the first band, i.e. (1,).
-        band_names : tuple, optional
-            Names associated with the respective bands of the GeoTIFF files. Defaults to None, i.e. the band numbers
-            will be used as a name.
+        data_variables : list, optional
+            Data variables to read. Default is to read all available data variables.
         engine : str, optional
-            Engine used in the background to read the mosaic. The following options are available:
-                - 'vrt' : Uses GDAL's VRT format to stack the GeoTIFF files per tile and load them as once. This option
-                          yields good performance if the mosaic is stored locally on one drive. Parallelisation is applied
-                          across tiles.
-                - 'parallel' : Reads file by file, but in a parallelised manner. This option yields good performance if
-                               the mosaic is stored on a distributed file system.
-        n_cores : int, optional
-            Number of cores used to read the mosaic in a parallelised manner (defaults to 1).
+            Engine used in the background to read the NetCDF data. The following options are available:
+                - 'netcdf4' : Uses the netCDF4 library to create an `MFDataset` object.
+                - 'xarray' : Uses xarray's `open_mfdataset` function.
+        parallel : bool, optional
+            Flag to activate parallelisation or not when using 'xarray' as an engine. Defaults to true.
         auto_decode : bool, optional
-            True if mosaic should be decoded according to the information available in its metadata (default).
+            True if NetCDF data should be decoded according to the information available in its metadata (default).
         decoder : callable, optional
-            Function allowing to decode mosaic read from disk.
+            Function allowing to decode NetCDF data read from disk.
         decoder_kwargs : dict, optional
             Keyword arguments for the decoder.
 
@@ -191,8 +184,8 @@ class NetCdfReader(RasterDataReader):
             data = self.__read_netcdf4(new_tile, data_variables=data_variables, auto_decode=auto_decode,
                                        decoder=decoder, decoder_kwargs=decoder_kwargs)
         elif engine == 'xarray':
-            data = self.__read_xarray(new_tile, data_variables=data_variables, parallel=parallel, auto_decode=auto_decode,
-                                      decoder=decoder, decoder_kwargs=decoder_kwargs)
+            data = self.__read_xarray(new_tile, data_variables=data_variables, parallel=parallel,
+                                      auto_decode=auto_decode, decoder=decoder, decoder_kwargs=decoder_kwargs)
         else:
             err_msg = f"Engine '{engine}' is not supported!"
             raise ValueError(err_msg)
@@ -203,13 +196,35 @@ class NetCdfReader(RasterDataReader):
         return self
 
     def __read_netcdf4(self, new_tile, data_variables=None, auto_decode=False, decoder=None, decoder_kwargs=None):
+        """
+        Reads NetCDF data using the `MFDataset` class of the netCDF4 library.
+
+        Parameters
+        ----------
+        new_tile : geospade.raster.Tile
+            Target tile representing the spatial extent of the data window to read from.
+        data_variables : list, optional
+            Data variables to read. Default is to read all available data variables.
+        auto_decode : bool, optional
+            True if NetCDF data should be decoded according to the information available in its metadata (default).
+        decoder : callable, optional
+            Function allowing to decode NetCDF data read from disk.
+        decoder_kwargs : dict, optional
+            Keyword arguments for the decoder.
+
+        Returns
+        -------
+        xr.Dataset :
+            Read NetDCF variables represented as a xarray.Dataset instance.
+
+        """
         data_variables = data_variables or self.data_variables
         decoder_kwargs = decoder_kwargs or dict()
         data = []
         for tile in self._mosaic.tiles:
-            geom_id = tile.name
+            tile_id = tile.name
             raster_access = RasterAccess(tile, new_tile)
-            file_register = self.file_register.loc[self.file_register['geom_id'] == geom_id]
+            file_register = self.file_register.loc[self.file_register['tile_id'] == tile_id]
             filepaths = list(file_register['filepath'])
             nc_ds = MFDataset(filepaths, aggdim='time')
             nc_ds.set_auto_maskandscale(auto_decode)
@@ -240,13 +255,37 @@ class NetCdfReader(RasterDataReader):
 
     def __read_xarray(self, new_tile, data_variables=None, parallel=True, auto_decode=False, decoder=None,
                       decoder_kwargs=None):
+        """
+        Reads NetCDF data using the `open_mfdataset` function of the xarray library.
+
+        Parameters
+        ----------
+        new_tile : geospade.raster.Tile
+            Target tile representing the spatial extent of the data window to read from.
+        data_variables : list, optional
+            Data variables to read. Default is to read all available data variables.
+        parallel : bool, optional
+            Flag to activate parallelisation or not when using 'xarray' as an engine. Defaults to true.
+        auto_decode : bool, optional
+            True if NetCDF data should be decoded according to the information available in its metadata (default).
+        decoder : callable, optional
+            Function allowing to decode NetCDF data read from disk.
+        decoder_kwargs : dict, optional
+            Keyword arguments for the decoder.
+
+        Returns
+        -------
+        xr.Dataset :
+            Read NetDCF variables represented as a xarray.Dataset instance.
+
+        """
         data_variables = data_variables or self.data_variables
         decoder_kwargs = decoder_kwargs or dict()
         data = []
         for tile in self._mosaic.tiles:
-            geom_id = tile.name
+            tile_id = tile.name
             raster_access = RasterAccess(tile, new_tile)
-            file_register = self.file_register.loc[self.file_register['geom_id'] == geom_id]
+            file_register = self.file_register.loc[self.file_register['tile_id'] == tile_id]
             filepaths = file_register['filepath']
             xr_ds = xr.open_mfdataset(filepaths, concat_dim="time", combine="nested", data_vars='minimal',
                                       coords='minimal', compat='override', parallel=parallel,
@@ -269,14 +308,18 @@ class NetCdfReader(RasterDataReader):
 
     def _to_xarray(self, data, tile, times, metadata):
         """
-        Converts mosaic being available as a NumPy array to an xarray dataset.
+        Converts NetCDF data being available as a NumPy array to a xarray dataset.
 
         Parameters
         ----------
         data : dict
-            Dictionary mapping band numbers to GeoTIFF raster mosaic being available as a NumPy array.
-        band_names : list of str, optional
-            Band names associated with the respective band number.
+            Dictionary mapping data variables with NetCDF variable data being available as a NumPy array.
+        tile : geospade.raster.Tile
+            Tile representing the spatial extent of `data`.
+        times : list
+            List of datetime instances representing the temporal coordinates of the image stack.
+        metadata : dict
+            Metadata attributes for each data variable.
 
         Returns
         -------
@@ -305,7 +348,7 @@ class NetCdfWriter(RasterDataWriter):
     def __init__(self, mosaic, file_register=None, data=None, file_dimension='layer_id', file_coords=None, dirpath=None,
                  fn_pattern='{layer_id}.tif'):
         """
-        Constructor of `GeoTiffWriter`.
+        Constructor of `NetCdfWriter`.
 
         Parameters
         ----------
@@ -321,11 +364,11 @@ class NetCdfWriter(RasterDataWriter):
                 - 'tile_id' : str or int
                     Tile name or ID to which tile a file belongs to.
             If it is none, then it will be created from the information stored in `mosaic`, `dirpath`, and
-            `file_name_pattern`.
+            `fn_pattern`.
         data : xr.Dataset, optional
-            Raster mosaic stored in memory. It must match the spatial sampling and CRS of the mosaic, but not its spatial
-            extent or tiling. Moreover, the dimension of the mosaic along the first dimension (stack/file dimension), must
-            match the entries/filepaths in `file_register`.
+            Raster data stored in memory. It must match the spatial sampling and CRS of the mosaic, but not its spatial
+            extent or tiling. Moreover, the dimension of the mosaic along the first dimension (stack/file dimension),
+            must match the entries/filepaths in `file_register`.
         file_dimension : str, optional
             Dimension/column name of the dimension, where to stack the files along (first axis), e.g. time, bands etc.
             Defaults to 'layer_id', i.e. the layer ID's are used as the main coordinates to stack the files.
@@ -333,10 +376,10 @@ class NetCdfWriter(RasterDataWriter):
             Additional columns of `file_register` to use as coordinates. Defaults to None, i.e. only coordinates along
             `file_dimension` are used.
         dirpath : str, optional
-            Directory path to the folder where the GeoTIFF files should be written to. Defaults to none, i.e. the
+            Directory path to the folder where the NetCDF files should be written to. Defaults to none, i.e. the
             current working directory is used.
         fn_pattern : str, optional
-            Pattern for the filename of the new GeoTIFF files. To fill in specific parts of the new file name with
+            Pattern for the filename of the new NetCDF files. To fill in specific parts of the new file name with
             information from the file register, you can specify the respective file register column names in curly
             brackets and add them to the pattern string as desired. Defaults to '{layer_id}.tif'.
 
@@ -347,27 +390,51 @@ class NetCdfWriter(RasterDataWriter):
 
     @classmethod
     def from_data(self, data, filepath, mosaic=None, **kwargs):
+        """
+        Creates `NetCdfWriter` instance from an xarray Dataset instance and a target filepath, i.e. this function
+        should help to write/export the whole image stack to one file.
+
+        Parameters
+        ----------
+        data : xr.Dataset
+            Dataset to write to disk.
+        filepath : str
+            Full system path to NetCDF file to write to.
+        mosaic : geospade.raster.MosaicGeometry, optional
+            Mosaic representing the spatial allocation of the given file. The tiles of the mosaic have to match the
+            ID's/names of the 'tile_id' column. If it is None, a one-tile mosaic will be created from the given
+            mosaic.
+        kwargs
+            Keywords for class initialisation.
+
+        Returns
+        -------
+        NetCdfWriter
+
+        """
         file_register_dict = dict()
         file_register_dict['layer_id'] = [0]
-        file_register_dict['geom_id'] = [0]
+        file_register_dict['tile_id'] = ['0']
         file_register_dict['filepath'] = [filepath]
         file_register = pd.DataFrame(file_register_dict)
         return super().from_xarray(data, file_register, mosaic=mosaic, **kwargs)
 
     def write(self, data, encoder=None, encoder_kwargs=None, overwrite=False, **kwargs):
         """
-        Writes a certain chunk of mosaic to disk.
+        Writes a certain chunk of NetCDF data to disk.
 
         Parameters
         ----------
         data : xr.Dataset
             Data chunk to be written to disk or being appended to existing mosaic.
         encoder : callable, optional
-            Function allowing to encode mosaic before writing it to disk.
+            Function allowing to encode a xarray dataset before writing it to disk.
         encoder_kwargs : dict, optional
             Keyword arguments for the encoder.
         overwrite : bool, optional
-            True if mosaic should be overwritten, false if not (default).
+            True if the NetCDF file(s) should be overwritten, false if not (default).
+        kwargs
+            Keywords for creating a `NetCdf4File` instance.
 
         """
         data_geom = self.raster_geom_from_data(data, sref=self.mosaic.sref)
@@ -383,16 +450,18 @@ class NetCdfWriter(RasterDataWriter):
             offsets[data_variable] = data[data_variable].attrs.get('add_offset', 0)
 
         for filepath, file_group in self._file_register.groupby('filepath'):
-            geom_id = file_group.iloc[0].get('geom_id', '0')
+            tile_id = file_group.iloc[0].get('tile_id', '0')
             file_coords = list(file_group[self._file_dim])
-            tile = self._mosaic[geom_id]
+            tile = self._mosaic[tile_id]
             if not tile.intersects(data_geom):
                 continue
             file_id = file_group.iloc[0].get('file_id', None)
             if file_id is None:
                 gt_driver = NetCdf4File(filepath, mode='w', geotrans=tile.geotrans, sref_wkt=tile.sref.wkt,
-                                        raster_shape=tile.shape, data_variables=data_variables, dtypes=dtypes,
+                                        space_dims={'y': tile.n_rows, 'x': tile.n_cols},
+                                        data_variables=data_variables, dtypes=dtypes,
                                         scale_factors=scale_factors, offsets=offsets, nodatavals=nodatavals,
+                                        attrs={'time': {'units': 'days since 1950-01-01 00:00:00'}},  # TODO: make this more flexible (this needs to be defined from outside)
                                         metadata=data.attrs, **kwargs)
                 file_id = len(list(self._files.keys())) + 1
                 self._files[file_id] = gt_driver
@@ -408,19 +477,21 @@ class NetCdfWriter(RasterDataWriter):
 
     def export(self, apply_tiling=False, encoder=None, encoder_kwargs=None, overwrite=False, **kwargs):
         """
-        Writes all the internally stored mosaic to disk.
+        Writes all the internally stored data to disk.
 
         Parameters
         ----------
         apply_tiling : bool, optional
-            True if the internal mosaic should be tiled according to the mosaic.
-            False if the internal mosaic composes a new tile and should not be tiled (default).
+            True if the internal data should be tiled according to the mosaic.
+            False if the internal data composes a new tile and should not be tiled (default).
         encoder : callable, optional
-            Function allowing to encode mosaic before writing it to disk.
+            Function allowing to encode a xarray dataset before writing it to disk.
         encoder_kwargs : dict, optional
             Keyword arguments for the encoder.
         overwrite : bool, optional
-            True if mosaic should be overwritten, false if not (default).
+            True if the NetCDF file(s) should be overwritten, false if not (default).
+        kwargs
+            Keywords for creating a `NetCdf4File` instance.
 
         """
         data_variables = list(self._data.data_vars)
@@ -436,9 +507,9 @@ class NetCdfWriter(RasterDataWriter):
 
         data_write = self._data[data_variables]
         for filepath, file_group in self._file_register.groupby('filepath'):
-            geom_id = file_group.iloc[0].get('geom_id', '0')
+            tile_id = file_group.iloc[0].get('tile_id', '0')
             if apply_tiling:
-                tile = self._mosaic[geom_id]
+                tile = self._mosaic[tile_id]
                 if not tile.intersects(self._data_geom):
                     continue
                 tile_write = self._data_geom.slice_by_geom(tile, inplace=False)
@@ -447,7 +518,9 @@ class NetCdfWriter(RasterDataWriter):
                 tile_write = self._data_geom
 
             with NetCdf4File(filepath, mode='w', data_variables=data_variables, scale_factors=scale_factors,
-                             offsets=offsets, nodatavals=nodatavals, dtypes=dtypes, geotrans=tile_write.geotrans,
+                             offsets=offsets, nodatavals=nodatavals, dtypes=dtypes,
+                             attrs={self._file_dim: {'units': 'days since 1950-01-01 00:00:00'}},  # TODO: make this more flexible (this needs to be defined from outside)
+                             geotrans=tile_write.geotrans,
                              sref_wkt=tile_write.sref.wkt, metadata=data_write.attrs, **kwargs) as nc_file:
                 nc_file.write(data_write, encoder=encoder, encoder_kwargs=encoder_kwargs)
 

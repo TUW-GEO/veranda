@@ -266,7 +266,7 @@ class RasterData(metaclass=abc.ABCMeta):
             new_raster_data = copy.deepcopy(self)
             return new_raster_data.select_tiles(tile_names, inplace=True)
 
-        self._file_register = self._file_register.loc[self._file_register['geom_id'].isin(tile_names)]
+        self._file_register = self._file_register.loc[self._file_register['tile_id'].isin(tile_names)]
         self._mosaic.select_by_tile_names(tile_names)
 
         return self
@@ -387,7 +387,7 @@ class RasterData(metaclass=abc.ABCMeta):
             tile_oi.slice_by_rc(row, col, inplace=True, name='0')
             tile_oi.active = True
             self._mosaic.from_tile_list([tile_oi], inplace=True)
-            self._file_register = self._file_register[self._file_register['geom_id'] == tile_oi.parent_root.name]
+            self._file_register = self._file_register[self._file_register['tile_id'] == tile_oi.parent_root.name]
         else:
             wrn_msg = "Coordinates are outside the spatial extent of the raster mosaic files."
             warnings.warn(wrn_msg)
@@ -464,7 +464,7 @@ class RasterData(metaclass=abc.ABCMeta):
 
         self._mosaic = sliced_mosaic
         tile_names_oi = [tile.parent_root.name for tile in self._mosaic.tiles]
-        self._file_register = self._file_register.loc[self._file_register['geom_id'].isin(tile_names_oi)]
+        self._file_register = self._file_register.loc[self._file_register['tile_id'].isin(tile_names_oi)]
 
         return self
 
@@ -661,8 +661,8 @@ class RasterDataWriter(RasterData):
             file_register = pd.DataFrame(file_register_dict)
 
         n_entries = len(file_register)
-        if 'geom_id' not in file_register.columns:
-            file_register['geom_id'] = ['0'] * n_entries
+        if 'tile_id' not in file_register.columns:
+            file_register['tile_id'] = ['0'] * n_entries
 
         if file_dimension not in file_register.columns:
             if data is not None:

@@ -46,9 +46,9 @@ class GeoTiffAccess(RasterAccess):
         Parameters
         ----------
         src_raster_geom : geospade.raster.RasterGeometry
-            Raster geometry representing the extent and indices of the mosaic to access.
+            Raster geometry representing the extent and indices of the array to access.
         dst_raster_geom : geospade.raster.RasterGeometry
-            Raster geometry representing the extent and indices of the mosaic to assign.
+            Raster geometry representing the extent and indices of the array to assign.
         src_root_raster_geom : geospade.raster.RasterGeometry, optional
             Raster geometry representing the origin to which `src_raster_geom` should be referred to. Defaults to None,
             i.e. the root parent of `src_raster_geom` is used.
@@ -77,7 +77,7 @@ class GeoTiffAccess(RasterAccess):
 
 
 class GeoTiffReader(RasterDataReader):
-    """ Allows to read and modify a stack of GeoTIFF mosaic. """
+    """ Allows to read and modify a stack of GeoTIFF data. """
     def __init__(self, file_register, mosaic, file_dimension='layer_id', file_coords=None):
         """
         Constructor of `GeoTiffReader`.
@@ -139,7 +139,7 @@ class GeoTiffReader(RasterDataReader):
         n_filepaths = len(filepaths)
         file_register_dict = dict()
         file_register_dict['filepath'] = filepaths
-        file_register_dict['geom_id'] = ['0'] * n_filepaths
+        file_register_dict['tile_id'] = ['0'] * n_filepaths
         file_register_dict[file_dimension] = list(range(1, n_filepaths + 1))
         file_register = pd.DataFrame(file_register_dict)
 
@@ -180,7 +180,7 @@ class GeoTiffReader(RasterDataReader):
         file_register_dict = dict()
         file_register_dict['filepath'] = filepaths
 
-        geom_ids = []
+        tile_ids = []
         layer_ids = []
         tiles = []
         tile_idx = 0
@@ -201,11 +201,11 @@ class GeoTiffReader(RasterDataReader):
                 curr_tile_idx = tile_idx
                 tile_idx += 1
 
-            geom_ids.append(curr_tile_idx)
-            layer_id = sum(np.array(geom_ids) == curr_tile_idx) + 1
+            tile_ids.append(curr_tile_idx)
+            layer_id = sum(np.array(tile_ids) == curr_tile_idx) + 1
             layer_ids.append(layer_id)
 
-        file_register_dict['geom_id'] = geom_ids
+        file_register_dict['tile_id'] = tile_ids
         file_register_dict[file_dimension] = layer_ids
         file_register = pd.DataFrame(file_register_dict)
 
@@ -460,9 +460,9 @@ class GeoTiffWriter(RasterDataWriter):
             offsets[i + 1] = self._data[band_name].attrs.get('add_offset', 0)
 
         for filepath, file_group in self._file_register.groupby('filepath'):
-            geom_id = file_group.iloc[0].get('geom_id', '0')
+            tile_id = file_group.iloc[0].get('tile_id', '0')
             file_coords = list(file_group[self._file_dim])
-            tile = self._mosaic[geom_id]
+            tile = self._mosaic[tile_id]
             if not tile.intersects(data_geom):
                 continue
             file_id = file_group.iloc[0].get('file_id', None)
@@ -516,12 +516,12 @@ class GeoTiffWriter(RasterDataWriter):
         bands = range(1, len(band_names) + 1)
         n_bands = len(bands)
         for filepath, file_group in self._file_register.groupby('filepath'):
-            geom_id = file_group.iloc[0].get('geom_id', '0')
+            tile_id = file_group.iloc[0].get('tile_id', '0')
             file_coords = list(file_group[self._file_dim])
             xrds = self._data.sel(**{self._file_dim: file_coords})
             data_write = xrds[band_names].to_array().data
             if apply_tiling:
-                tile = self._mosaic[geom_id]
+                tile = self._mosaic[tile_id]
                 if not tile.intersects(self._data_geom):
                     continue
                 tile_write = self._data_geom.slice_by_geom(tile, inplace=False, name='0')
@@ -537,14 +537,14 @@ class GeoTiffWriter(RasterDataWriter):
                               encoder=encoder, encoder_kwargs=encoder_kwargs)
 
 
-def read_vrt_stack(geom_id):
+def read_vrt_stack(tile_id):
     """
     Function being responsible to create a new VRT file from a stack of GeoTIFF files, read mosaic from this files, and
     assign it to a shared memory array. This function is meant to be executed in parallel on different cores.
 
     Parameters
     ----------
-    geom_id : str or int
+    tile_id : str or int
         Tile/geometry ID coming from the Pool's mapping function.
 
     """
@@ -556,10 +556,10 @@ def read_vrt_stack(geom_id):
     decoder_kwargs = PROC_OBJS['decoder_kwargs']
     file_dimension = PROC_OBJS['file_dimension']
 
-    gt_access = access_map[geom_id]
+    gt_access = access_map[tile_id]
     bands = list(shm_map.keys())
     n_bands = len(bands)
-    file_register = global_file_register.loc[global_file_register['geom_id'] == geom_id]
+    file_register = global_file_register.loc[global_file_register['tile_id'] == tile_id]
     layer_ids = file_register[file_dimension]
 
     path = tempfile.gettempdir()
@@ -617,9 +617,9 @@ def read_single_files(file_idx):
 
     file_entry = global_file_register.loc[file_idx]
     layer_id = file_entry[file_dimension]
-    geom_id = file_entry['geom_id']
+    tile_id = file_entry['tile_id']
     filepath = file_entry['filepath']
-    gt_access = access_map[geom_id]
+    gt_access = access_map[tile_id]
     bands = list(shm_map.keys())
 
     with GeoTiffFile(filepath, mode='r', auto_decode=auto_decode) as gt_file:

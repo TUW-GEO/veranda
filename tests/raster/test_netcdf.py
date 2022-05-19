@@ -182,10 +182,10 @@ class NetCdf4Test(unittest.TestCase):
                              'inc': (dims, data)}, coords=coords)
 
         time_units = 'days since 2000-01-01 00:00:00'
-        with NetCdf4File(self.filepath, mode='w', time_units=time_units) as nc:
+        with NetCdf4File(self.filepath, mode='w', attrs={'time': {'units': time_units}}) as nc:
             nc.write(ds_ref)
 
-        with NetCdf4File(self.filepath, time_units=time_units) as nc:
+        with NetCdf4File(self.filepath, attrs={'time': {'units': time_units}}) as nc:
             ds = nc.read()
             np.testing.assert_array_equal(pd.DatetimeIndex(ds['time'].data),
                                           coords['time'])
@@ -217,6 +217,28 @@ class NetCdf4Test(unittest.TestCase):
 
         np.testing.assert_array_equal(ds['x'].values, x)
         np.testing.assert_array_equal(ds['y'].values, y)
+
+    def test_non_temporal_read_and_write(self):
+        """ Test read and write for a dataset not containing any temporal information. """
+        data = np.ones((100, 100, 100), dtype=np.float32)
+        dims = ['layer', 'y', 'x']
+        coords = {'layer': range(data.shape[0])}
+        attr1 = {'unit': 'dB'}
+        attr2 = {'unit': 'degree'}
+
+        ds_ref = xr.Dataset({'sig': (dims, data, attr1),
+                             'inc': (dims, data, attr2),
+                             'azi': (dims, data, attr2)}, coords=coords)
+
+        with NetCdf4File(self.filepath, mode='w', data_variables=['sig', 'inc', 'azi'], stack_dims={'layer': None},
+                         nodatavals={'inc': -9999, 'azi': -9999}, dtypes={'inc': 'int32', 'azi': 'int32'}) as nc:
+            nc.write(ds_ref)
+
+        with NetCdf4File(self.filepath) as nc:
+            ds = nc.read()
+            np.testing.assert_array_equal(ds['sig'][:], ds_ref['sig'][:])
+            np.testing.assert_array_equal(ds['inc'][:], ds_ref['inc'][:])
+            np.testing.assert_array_equal(ds['azi'][:], ds_ref['azi'][:])
 
     def tearDown(self):
         """
@@ -323,7 +345,7 @@ class NetCdf4XrTest(unittest.TestCase):
                              'inc': (dims, data)}, coords=coords)
 
         time_units = 'days since 2000-01-01 00:00:00'
-        with NetCdfXrFile(self.filepath, mode='w', time_units=time_units) as nc:
+        with NetCdfXrFile(self.filepath, mode='w', attrs={'time': {'units': time_units}}) as nc:
             nc.write(ds_ref)
 
         with NetCdfXrFile(self.filepath) as nc:
@@ -358,6 +380,28 @@ class NetCdf4XrTest(unittest.TestCase):
 
         np.testing.assert_array_equal(ds['x'].values, x)
         np.testing.assert_array_equal(ds['y'].values, y)
+
+    def test_non_temporal_read_and_write(self):
+        """ Test read and write for a dataset not containing any temporal information. """
+        data = np.ones((100, 100, 100), dtype=np.float32)
+        dims = ['layer', 'y', 'x']
+        coords = {'layer': range(data.shape[0])}
+        attr1 = {'unit': 'dB'}
+        attr2 = {'unit': 'degree'}
+
+        ds_ref = xr.Dataset({'sig': (dims, data, attr1),
+                             'inc': (dims, data, attr2),
+                             'azi': (dims, data, attr2)}, coords=coords)
+
+        with NetCdfXrFile(self.filepath, mode='w', data_variables=['sig', 'inc', 'azi'], stack_dims=['layer'],
+                         nodatavals={'inc': -9999, 'azi': -9999}, dtypes={'inc': 'int32', 'azi': 'int32'}) as nc:
+            nc.write(ds_ref)
+
+        with NetCdfXrFile(self.filepath) as nc:
+            ds = nc.read()
+            np.testing.assert_array_equal(ds['sig'][:], ds_ref['sig'][:])
+            np.testing.assert_array_equal(ds['inc'][:], ds_ref['inc'][:])
+            np.testing.assert_array_equal(ds['azi'][:], ds_ref['azi'][:])
 
     def tearDown(self):
         """

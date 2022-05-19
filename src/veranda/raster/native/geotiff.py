@@ -121,7 +121,7 @@ class GeoTiffFile:
         return len(self.bands)
 
     @staticmethod
-    def _is_bigtiff(filepath):
+    def is_file_bigtiff(filepath):
         """
         Determines if the given GeoTIFF is a BigTIFF file or not.
 
@@ -174,8 +174,8 @@ class GeoTiffFile:
 
     def _open(self):
         """
-        Helper function supporting the different mosaic modes, i.e. either opening existing mosaic or creating a new
-        mosaic source.
+        Helper function supporting the different file modes, i.e. either opening existing files or creating a new
+        file source.
 
         """
         if self.mode == 'r':
@@ -189,7 +189,7 @@ class GeoTiffFile:
             self.metadata = self.src.GetMetadata()
             self.blocksize = self.src.GetRasterBand(1).GetBlockSize()  # block seems to be band-independent, because no set function is available per band
             self.compression = self.src.GetMetadata('IMAGE_STRUCTURE').get('COMPRESSION')
-            self.is_bigtiff = self._is_bigtiff(self.filepath)
+            self.is_bigtiff = self.is_file_bigtiff(self.filepath)
             self.is_tiled = self.blocksize[1] == 1
 
             self.bands = []
@@ -255,13 +255,15 @@ class GeoTiffFile:
         Parameters
         ----------
         row : int, optional
-            Row number/index (defaults to 0).
+            Row number/index. Defaults to 0.
         col : int, optional
-            Column number/index (defaults to 0).
+            Column number/index. Defaults to 0.
         n_rows : int, optional
-            Number of rows to read (default is 1).
+            Number of rows of the reading window (counted from `row`). If None (default), then the full extent of
+            the raster is used.
         n_cols : int, optional
-            Number of columns to read (default is 1).
+            Number of columns of the reading window (counted from `col`). If None (default), then the full extent of
+            the raster is used.
         bands : int or tuple or list, optional
             Band numbers of the GeoTIFF file to read mosaic from. Defaults to none, i.e. all available bands will be
             used.
@@ -278,8 +280,8 @@ class GeoTiffFile:
         """
 
         decoder_kwargs = decoder_kwargs or dict()
-        n_cols = self.shape[1] if n_cols is None else n_cols
         n_rows = self.shape[0] if n_rows is None else n_rows
+        n_cols = self.shape[1] if n_cols is None else n_cols
         bands = bands or self.bands
         bands = to_list(bands)
 
@@ -305,7 +307,7 @@ class GeoTiffFile:
 
     def write(self, data, row=0, col=0, encoder=None, encoder_kwargs=None):
         """
-        Writes mosaic to a GeoTIFF file.
+        Writes a NumPy array to a GeoTIFF file.
 
         Parameters
         ----------
@@ -317,7 +319,7 @@ class GeoTiffFile:
         col : int, optional
             Offset column number/index (defaults to 0).
         encoder : callable, optional
-            Function allowing to encode mosaic before writing it to disk.
+            Function allowing to encode a NumPy array before writing it to disk.
         encoder_kwargs : dict, optional
             Keyword arguments for the encoder.
 
@@ -384,7 +386,7 @@ class GeoTiffFile:
 
     def flush(self):
         """
-        Flush mosaic on disk.
+        Flush data on disk.
         """
         if self.src is not None:
             self.src.FlushCache()
@@ -402,7 +404,7 @@ class GeoTiffFile:
         self.close()
 
 
-def create_vrt_file(filepaths, vrt_filepath, shape, sref_wkt, geotrans, bands=(1,)):
+def create_vrt_file(filepaths, vrt_filepath, shape, sref_wkt, geotrans, bands=1):
     """
     Creates a VRT file stack from a list of file paths.
 
@@ -418,11 +420,12 @@ def create_vrt_file(filepaths, vrt_filepath, shape, sref_wkt, geotrans, bands=(1
         Coordinate reference system in WKT format.
     geotrans : 6-tuple
         GDAL's geotransformation parameters.
-    bands : tuple, optional
-        Band numbers. Defaults to (1,).
+    bands : tuple or list or int, optional
+        Band number(s). Defaults to 1.
 
     """
     n_filepaths = len(filepaths)
+    bands = to_list(bands)
     n_bands = len(bands)
     n_rows, n_cols = shape
 
