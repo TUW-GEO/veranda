@@ -1,16 +1,3 @@
-# Copyright (c) 2017, Vienna University of Technology (TU Wien), Department
-# of Geodesy and Geoinformation (GEO).
-# All rights reserved.
-#
-# All information contained herein is, and remains the property of Vienna
-# University of Technology (TU Wien), Department of Geodesy and Geoinformation
-# (GEO). The intellectual and technical concepts contained herein are
-# proprietary to Vienna University of Technology (TU Wien), Department of
-# Geodesy and Geoinformation (GEO). Dissemination of this information or
-# reproduction of this material is forbidden unless prior written permission
-# is obtained from Vienna University of Technology (TU Wien), Department of
-# Geodesy and Geoinformation (GEO).
-
 """
 Test NetCDF I/O.
 """
@@ -393,7 +380,7 @@ class NetCdf4XrTest(unittest.TestCase):
                              'inc': (dims, data, attr2),
                              'azi': (dims, data, attr2)}, coords=coords)
 
-        with NetCdfXrFile(self.filepath, mode='w', data_variables=['sig', 'inc', 'azi'], stack_dims=['layer'],
+        with NetCdfXrFile(self.filepath, mode='w', data_variables=['sig', 'inc', 'azi'], stack_dims={'layer': None},
                          nodatavals={'inc': -9999, 'azi': -9999}, dtypes={'inc': 'int32', 'azi': 'int32'}) as nc:
             nc.write(ds_ref)
 
@@ -430,7 +417,7 @@ class NetCdfDataTest(unittest.TestCase):
         num_files = 50
         xsize = 60
         ysize = 50
-        data_variable = 'mosaic'
+        data_variable = 'band_1'
 
         ds_tile = Tile(ysize, xsize, sref=SpatialRef(4326))
         ds_mosaic = MosaicGeometry.from_tile_list([ds_tile])
@@ -443,11 +430,10 @@ class NetCdfDataTest(unittest.TestCase):
         ds = xr.Dataset({data_variable: (dims, data)}, coords=coords)
         dst_filepath = os.path.join(self.path, "test.nc")
 
-        with NetCdfWriter.from_data(ds, dst_filepath, mosaic=ds_mosaic, file_dimension='time') as nc_writer:
+        with NetCdfWriter.from_data(ds, dst_filepath, mosaic=ds_mosaic, stack_dimension='time') as nc_writer:
             nc_writer.export()
-            filepaths = list(set(nc_writer.file_register['filepath']))
 
-        with NetCdfReader.from_filepaths(filepaths) as nc_reader:
+        with NetCdfReader.from_filepaths([dst_filepath]) as nc_reader:
             ts1 = nc_reader.select_px_window(0, 0, width=10, height=10, inplace=False)
             ts1.read(data_variables=data_variable)
             ts2 = nc_reader.select_px_window(10, 12, width=5, height=5, inplace=False)
@@ -482,7 +468,7 @@ class NetCdfDataTest(unittest.TestCase):
         ds = xr.Dataset({data_variables[0]: (dims, data, attr1), data_variables[1]: (dims, data, attr2)}, coords=coords)
         dst_filepath = os.path.join(self.path, "test.nc")
 
-        with NetCdfWriter.from_data(ds, dst_filepath, mosaic=ds_mosaic, file_dimension='time') as nc_writer:
+        with NetCdfWriter.from_data(ds, dst_filepath, mosaic=ds_mosaic, stack_dimension='time') as nc_writer:
             nc_writer.export()
             filepaths = list(set(nc_writer.file_register['filepath']))
 
@@ -519,7 +505,7 @@ class NetCdfDataTest(unittest.TestCase):
         layer_ids = [0, 5, 9]
         data_variable = 'mosaic'
 
-        ds_tile = Tile(ysize, xsize, SpatialRef(4326), name=0)
+        ds_tile = Tile(ysize, xsize, SpatialRef(4326), name='0')
         ds_mosaic = MosaicGeometry.from_tile_list([ds_tile])
 
         dims = ['time', 'y', 'x']
@@ -531,7 +517,7 @@ class NetCdfDataTest(unittest.TestCase):
         ds = xr.Dataset({'mosaic': (dims, data)}, coords=coords)
         dst_filepath = os.path.join(self.path, "test.nc")
         layers = dates[layer_ids]
-        with NetCdfWriter.from_data(ds, dst_filepath, mosaic=ds_mosaic, file_dimension='time') as nc_writer:
+        with NetCdfWriter.from_data(ds, dst_filepath, mosaic=ds_mosaic, stack_dimension='time') as nc_writer:
             nc_writer.select_layers(layers, inplace=True)
             ul_data = nc_writer.select_px_window(0, 0, height=25, width=30)
             ur_data = nc_writer.select_px_window(0, 30, height=25, width=30)

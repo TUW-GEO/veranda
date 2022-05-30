@@ -1,3 +1,5 @@
+""" Manages I/O for a NetCDF file. """
+
 import os.path
 from collections import OrderedDict
 import netCDF4
@@ -11,9 +13,9 @@ from veranda.utils import to_list
 
 class NetCdf4File:
     """
-    Wrapper for reading and writing netCDF4 files with netCDF4 as a backend. By default, it will create three
+    Wrapper for reading and writing NetCDF files with netCDF4 as a backend. By default, it will create three
     predefined dimensions 'time', 'y', 'x', with time as an unlimited dimension
-    and x, y are either defined by a predefined shape or by an in-memory dataset.
+    and x, y are either defined by a pre-defined shape or by an in-memory dataset.
 
     The spatial dimensions are always limited, but can have an arbitrary name, whereas the dimension(s) which are used
     to stack spatial data are unlimited by default and can also have an arbitrary name.
@@ -21,7 +23,7 @@ class NetCdf4File:
     """
 
     def __init__(self, filepath, mode="r", data_variables=None, stack_dims=None, space_dims=None, scale_factors=1,
-                 offsets=0, nodatavals=127, dtypes='int8', complevels=2, zlibs=True, chunksizes=None,
+                 offsets=0, nodatavals=127, dtypes='int8', zlibs=True, complevels=2, chunksizes=None,
                  var_chunk_caches=None, attrs=None, geotrans=(0, 1, 0, 0, 0, 1), sref_wkt=None,
                  metadata=None, nc_format="NETCDF4_CLASSIC", overwrite=True, auto_decode=False):
         """
@@ -40,48 +42,58 @@ class NetCdf4File:
             Data variables stored in the NetCDF file. If `mode='w'`, then the data variable names are used to match
             the given encoding attributes, e.g. `scale_factors`, `offsets`, ...
         stack_dims : dict, optional
-            Dictionary containing the dimension names to used to stack the data over space as keys and their length as
+            Dictionary containing the dimension names used to stack the data over space as keys and their length as
             values. By default it is set to {'time': None}, i.e. an unlimited temporal dimension.
         space_dims : dict, optional
             Dictionary containing the spatial dimension names as keys and their length as values. By default it is set
             to {'y': None, 'x': None}. Note that the spatial dimensions will never be stored as unlimited - they are
             set as soon as data is read from or written to disk.
         scale_factors : dict or number, optional
-            Dictionary mapping data variable names with scale factors used for en-/decoding. Default values are 1.
+            Scale factor used for de- or encoding. Defaults to 1. It can either be one value (will be used for all
+            data variables), or a dictionary mapping the data variable with the respective scale factor.
         offsets : dict or number, optional
-            Dictionary mapping data variable names with offsets used for en-/decoding. Default values are 0.
+            Offset used for de- or encoding. Defaults to 0. It can either be one value (will be used for all data
+            variables), or a dictionary mapping the data variable with the respective offset.
         nodatavals : dict or number, optional
-            Dictionary mapping data variable names with no data values used for en-/decoding. Default values are 127.
+            No data value used for de- or encoding. Defaults to 127. It can either be one value (will be used for all
+            data variables), or a dictionary mapping the data variable with the respective no data value.
         dtypes : dict or str, optional
-            Dictionary mapping data variable names with NumPy-style data types used for en-/decoding. Default values
-            are 'int8'.
-        complevels : dict or int, optional
-            Dictionary mapping data variable names with the compression level used for en-/decoding. Default values
-            are 2.
+            Data types used for de- or encoding (NumPy-style). Defaults to 'int8'. It can either be one value (will
+            be used for all data variables), or a dictionary mapping the data variable with the respective data type.
         zlibs : dict or bool, optional
-            Dictionary mapping data variable names with a flag if ZLIB compression should be applied or not.
-            Default values True.
+            Flag if ZLIB compression should be applied or not. Defaults to True. It can either be one value (will
+            be used for all data variables), or a dictionary mapping the data variable with the respective flag value.
+        complevels : dict or int, optional
+            Compression levels used during de- or encoding. Defaults to 2. It can either be one value (will
+            be used for all data variables), or a dictionary mapping the data variable with the respective compression
+            level.
         chunksizes : dict or tuple, optional
-            Dictionary mapping data variable names with 3-tuple specifying the chunk size for each dimension. Defaults
-            to none, i.e. no chunking is used.
+            Chunk sizes given as a 3-tuple specifying the chunk sizes for each dimension. Defaults to None, i.e. no
+            chunking is used. It can either be one value/3-tuple (will be used for all data variables), or a dictionary
+            mapping the data variable with the respective chunk sizes.
         var_chunk_caches : dict or tuple, optional
-            Dictionary mapping data variable names with 3-tuple specifying the chunk cache settings size, nelems,
-            preemption. Defaults to none, i.e. the default setting is used.
+            Chunk cache settings given as a 3-tuple specifying the chunk cache settings size, nelems, preemption.
+            Defaults to None, i.e. the default NetCDF4 settings are used. It can either be one value/3-tuple (will be
+            used for all data variables), or a dictionary mapping the data variable with the respective chunk cache
+            settings.
         attrs : dict, optional
-            Dictionary mapping data variable names with metadata attributes. This can be an important parameter, when
-            for instance setting the units of a data variable.
-        geotrans : tuple or list, optional
-            Geo-transformation parameters (defaults to (0, 1, 0, 0, 0, 1)).
-                0: Top left x
-                1: W-E pixel resolution
-                2: Rotation, 0 if image is "north up"
-                3: Top left y
-                4: Rotation, 0 if image is "north up"
-                5: N-S pixel resolution (negative value if north-up)
+            Data variable specific attributes. This can be an important parameter, when for instance setting the units
+            of a data variable. Defaults to None. It can either be one dictionary (will be used for all data variables,
+            so maybe the `metadata` parameter is more suitable), or a dictionary mapping the data variable with the
+            respective attributes.
+        geotrans : 6-tuple or list, optional
+            Geo-transformation parameters with the following entries:
+                0: Top-left X coordinate
+                1: W-E pixel sampling
+                2: Rotation, 0 if image is axis-parallel
+                3: Top-left Y coordinate
+                4: Rotation, 0 if image is axis-parallel
+                5: N-S pixel sampling (negative value if North-up)
+            Defaults to (0, 1, 0, 0, 0, 1).
         sref_wkt : str, optional
-            Coordinate Reference System (CRS) in WKT form (defaults to none).
+            Coordinate Reference System (CRS) information in WKT format. Defaults to None.
         metadata : dict, optional
-            Global metadata attributes (defaults to none).
+            Global metadata attributes. Defaults to None.
         nc_format : str, optional
             NetCDF formats:
                 - 'NETCDF4_CLASSIC' (default)
@@ -89,10 +101,10 @@ class NetCdf4File:
                 - 'NETCDF3_64BIT_OFFSET',
                 - 'NETCDF3_64BIT_DATA'.
         overwrite : bool, optional
-            Flag if file can be overwritten if it already exists. Defaults to true.
+            Flag if the file can be overwritten if it already exists (defaults to False).
         auto_decode : bool, optional
-            If true, then scale factors and offset values are automatically applied when reading data.
-            Defaults to false.
+            True if data should be decoded according to the information available in its header.
+            False if not (default).
 
         """
 
@@ -108,9 +120,9 @@ class NetCdf4File:
         self.auto_decode = auto_decode
         self.gm_name = None
         self.nc_format = nc_format
-        self._stack_dims = stack_dims or {'time': None}
-        self._space_dims = space_dims or {'y': None, 'x': None}
-        if len(self._space_dims) != 2:
+        self.stack_dims = stack_dims or {'time': None}
+        self.space_dims = space_dims or {'y': None, 'x': None}
+        if len(self.space_dims) != 2:
             err_msg = "The number of spatial dimensions must equal 2."
             raise ValueError(err_msg)
         self.attrs = attrs or dict()
@@ -133,7 +145,7 @@ class NetCdf4File:
         self.nodatavals = dict()
         self.dtypes = dict()
 
-        all_variables = self.data_variables + list(self._stack_dims.keys()) + list(self._space_dims.keys())
+        all_variables = self.data_variables + list(self.stack_dims.keys()) + list(self.space_dims.keys())
         for variable in all_variables:
             self._zlibs[variable] = zlibs.get(variable, True)
             self._complevels[variable] = complevels.get(variable, 2)
@@ -147,26 +159,29 @@ class NetCdf4File:
 
         if self.mode == 'r':
             self._open()
-        elif self.mode == 'w' and None not in self._space_dims.values():
+        elif self.mode == 'w' and None not in self.space_dims.values():
             self._open()
 
     @property
     def raster_shape(self):
         """ 2-tuple: Tuple specifying the shape of the raster (defined by the spatial dimensions). """
-        space_dims = list(self._space_dims.keys())
+        space_dims = list(self.space_dims.keys())
         return len(self.src_vars[space_dims[0]]), len(self.src_vars[space_dims[1]])
 
     def _reset(self):
         """ Resets internal class variables with properties from an existing NetCDF dataset. """
-        stack_dims = list(set(self.src.dimensions.keys()) - set(self._space_dims.keys()))
-        self._stack_dims = dict()
-        for stack_dim in stack_dims:
-            is_unlimited = self.src.dimensions[stack_dim].isunlimited()
-            self._stack_dims[stack_dim] = self.src.dimensions[stack_dim].size if not is_unlimited else None
-        for sdim in self._space_dims.keys():
-            self._space_dims[sdim] = self.src.dimensions[sdim].size
+        all_dims = list(self.src.dimensions.keys())
+        space_dim_names = all_dims[-2:]
+        stack_dim_names = all_dims[:-2]
+        self.stack_dims = dict()
+        for stack_dim_name in stack_dim_names:
+            is_unlimited = self.src.dimensions[stack_dim_name].isunlimited()
+            self.stack_dims[stack_dim_name] = self.src.dimensions[stack_dim_name].size if not is_unlimited else None
+        self.space_dims = dict()
+        for space_dim_name in space_dim_names:
+            self.space_dims[space_dim_name] = self.src.dimensions[space_dim_name].size
 
-        dims = tuple(list(self._stack_dims.keys()) + list(self._space_dims.keys()))
+        dims = tuple(list(self.stack_dims.keys()) + list(self.space_dims.keys()))
         all_variables = [src_var.name for src_var in self.src_vars.values()]
         self.data_variables = [src_var.name for src_var in self.src_vars.values()
                                if src_var.dimensions == dims]
@@ -189,9 +204,9 @@ class NetCdf4File:
         if len(self.data_variables) == 0:
             self.data_variables = ds.data_vars
 
-        space_dims = list(self._space_dims.keys())
-        self._space_dims[space_dims[0]] = self._space_dims[space_dims[0]] or len(ds[space_dims[0]])
-        self._space_dims[space_dims[1]] = self._space_dims[space_dims[1]] or len(ds[space_dims[1]])
+        space_dims = list(self.space_dims.keys())
+        self.space_dims[space_dims[0]] = self.space_dims[space_dims[0]] or len(ds[space_dims[0]])
+        self.space_dims[space_dims[1]] = self.space_dims[space_dims[1]] or len(ds[space_dims[1]])
 
         all_variables = list(ds.data_vars) + list(ds.dims)
         for variable in all_variables:
@@ -292,7 +307,7 @@ class NetCdf4File:
             crs.setncatts(attr)
 
             stck_counter = 0
-            for stack_dim, n_vals in self._stack_dims.items():
+            for stack_dim, n_vals in self.stack_dims.items():
                 self.src.createDimension(stack_dim, n_vals)
                 chunksizes = self._chunksizes[stack_dim]
                 chunksizes = (chunksizes[stck_counter],) if chunksizes is not None else chunksizes
@@ -304,9 +319,9 @@ class NetCdf4File:
                 self.src_vars[stack_dim].setncatts(self.attrs.get(stack_dim, dict()))
                 stck_counter += 1
 
-            space_dims = list(self._space_dims.keys())
+            space_dims = list(self.space_dims.keys())
             space_dim1 = space_dims[0]
-            n_rows = self._space_dims[space_dim1]
+            n_rows = self.space_dims[space_dim1]
             self.src.createDimension(space_dim1, n_rows)
             attr = dict([('standard_name', 'projection_y_coordinate'),
                          ('long_name', 'y coordinate of projection')])
@@ -319,7 +334,7 @@ class NetCdf4File:
             self.src_vars[space_dim1] = y
 
             space_dim2 = space_dims[1]
-            n_cols = self._space_dims[space_dim2]
+            n_cols = self.space_dims[space_dim2]
             self.src.createDimension(space_dim2, n_cols)
             attr = OrderedDict([
                 ('standard_name', 'projection_x_coordinate'),
@@ -332,7 +347,7 @@ class NetCdf4File:
                        (0.5 + np.arange(n_cols)) * self.geotrans[2]
             self.src_vars[space_dim2] = x
 
-            dims = tuple(list(self._stack_dims.keys()) + list(self._space_dims.keys()))
+            dims = tuple(list(self.stack_dims.keys()) + list(self.space_dims.keys()))
             for data_variable in self.data_variables:
                 zlib = self._zlibs.get(data_variable)
                 complevel = self._complevels[data_variable]
@@ -356,7 +371,7 @@ class NetCdf4File:
     def read(self, row=0, col=0, n_rows=None, n_cols=None, data_variables=None, decoder=None,
              decoder_kwargs=None):
         """
-        Read mosaic from netCDF4 file.
+        Read data from a NetCDF file.
 
         Parameters
         ----------
@@ -372,7 +387,7 @@ class NetCdf4File:
             the raster is used.
         data_variables : list, optional
             Data variables to read. Default is to read all available data variables.
-        decoder : function, optional
+        decoder : callable, optional
             Decoding function expecting a NumPy array as input.
         decoder_kwargs : dict, optional
             Keyword arguments for the decoder.
@@ -390,9 +405,9 @@ class NetCdf4File:
 
         ref_chunksize = self._chunksizes[data_variables[0]]
         chunks = dict()
-        for i, stack_dim in enumerate(self._stack_dims.keys()):
+        for i, stack_dim in enumerate(self.stack_dims.keys()):
             chunks[stack_dim] = ref_chunksize[i]
-        space_dims = list(self._space_dims.keys())
+        space_dims = list(self.space_dims.keys())
         chunks[space_dims[0]] = ref_chunksize[-2]
         chunks[space_dims[1]] = ref_chunksize[-1]
         data_xr = xr.open_dataset(xr.backends.NetCDF4DataStore(self.src), mask_and_scale=self.auto_decode,
@@ -415,7 +430,7 @@ class NetCdf4File:
 
     def write(self, ds, row=0, col=0, encoder=None, encoder_kwargs=None):
         """
-        Write xarray dataset into a NetCDF file.
+        Write an xarray dataset into a NetCDF file.
 
         Parameters
         ----------
@@ -425,7 +440,7 @@ class NetCdf4File:
             Offset row number/index (defaults to 0).
         col : int, optional
             Offset column number/index (defaults to 0).
-        encoder : callable
+        encoder : callable, optional
             Encoding function expecting an xarray.DataArray as input.
         encoder_kwargs : dict, optional
             Keyword arguments for the encoder.
@@ -440,7 +455,7 @@ class NetCdf4File:
             self._open()
 
         ds_idxs = []
-        for stack_dim in self._stack_dims.keys():
+        for stack_dim in self.stack_dims.keys():
             # determine index where to append
             if self.mode == 'a':
                 append_start = self.src_vars[stack_dim].shape[0]
@@ -460,7 +475,7 @@ class NetCdf4File:
             self.src_vars[stack_dim][append_start:] = stack_vals
             ds_idxs.append(slice(append_start, None))
 
-        space_dims = list(self._space_dims)
+        space_dims = list(self.space_dims)
         n_rows, n_cols = len(ds[space_dims[0]]), len(ds[space_dims[1]])
         if space_dims[0] in ds.coords:
             self.src_vars[space_dims[0]][row:row + n_rows] = ds[space_dims[0]].data
@@ -509,7 +524,7 @@ class NetCdf4File:
             Dictionary mapping NetCDF4 variables with the value of `arg`.
 
         """
-        all_variables = self.data_variables + list(self._stack_dims.keys()) + list(self._space_dims.keys())
+        all_variables = self.data_variables + list(self.stack_dims.keys()) + list(self.space_dims.keys())
         if not isinstance(arg, dict):
             arg_dict = dict()
             for all_variable in all_variables:
@@ -543,7 +558,7 @@ class NetCdf4File:
 
     def __get_gm_name(self):
         """
-        str : The name of the NetCDF4 variable storing information about the grid, i.e. the variable
+        str : The name of the NetCDF4 variable storing information about the CRS, i.e. the variable
         containing an attribute named 'grid_mapping_name'.
         """
         gm_name = None
@@ -570,7 +585,7 @@ class NetCdf4File:
 
 class NetCdfXrFile:
     """
-    Wrapper for reading and writing netCDF4 files with xarray as a backend. By default, it will create three
+    Wrapper for reading and writing NetCDF files with xarray as a backend. By default, it will create three
     predefined dimensions 'time', 'y', 'x', but spatial dimensions or dimensions which are used
     to stack data can also have an arbitrary name.
 
@@ -595,40 +610,49 @@ class NetCdfXrFile:
             Data variables stored in the NetCDF file. If `mode='w'`, then the data variable names are used to match
             the given encoding attributes, e.g. `scale_factors`, `offsets`, ...
         stack_dims : dict, optional
-            Dictionary containing the dimension names to used to stack the data over space as keys and their length as
+            Dictionary containing the dimension names to stack the data over space as keys and their length as
             values. By default it is set to {'time': None}, i.e. an unlimited temporal dimension.
         space_dims : 2-list, optional
             The two names of the spatial dimension in Y and X direction. By default it is set to ['y', 'x'].
         scale_factors : dict or number, optional
-            Dictionary mapping data variable names with scale factors used for en-/decoding. Default values are 1.
+            Scale factor used for de- or encoding. Defaults to 1. It can either be one value (will be used for all
+            data variables), or a dictionary mapping the data variable with the respective scale factor.
         offsets : dict or number, optional
-            Dictionary mapping data variable names with offsets used for en-/decoding. Default values are 0.
+            Offset used for de- or encoding. Defaults to 0. It can either be one value (will be used for all data
+            variables), or a dictionary mapping the data variable with the respective offset.
         nodatavals : dict or number, optional
-            Dictionary mapping data variable names with no data values used for en-/decoding. Default values are 127.
+            No data value used for de- or encoding. Defaults to 127. It can either be one value (will be used for all
+            data variables), or a dictionary mapping the data variable with the respective no data value.
         dtypes : dict or str, optional
-            Dictionary mapping data variable names with NumPy-style data types used for en-/decoding. Default values
-            are 'int8'.
+            Data types used for de- or encoding (NumPy-style). Defaults to 'int8'. It can either be one value (will
+            be used for all data variables), or a dictionary mapping the data variable with the respective data type.
         compressions : dict, optional
-            Dictionary mapping data variable names with the compression settings used for en-/decoding.
-            See https://docs.xarray.dev/en/stable/user-guide/io.html#writing-encoded-data.
+            Compression settings used for de- or encoding. Defaults to None, i.e. xarray's default values are used. It
+            can either be one dictionary (will be used for all data variables), or a dictionary mapping the data
+            variable with the respective compression settings. See
+            https://docs.xarray.dev/en/stable/user-guide/io.html#writing-encoded-data.
         chunksizes : dict or tuple, optional
-            Dictionary mapping data variable names with 3-tuple specifying the chunk size for each dimension.
-            Defaults to none, i.e. no chunking is used.
+            Chunk sizes given as a 3-tuple specifying the chunk sizes for each dimension. Defaults to None, i.e. no
+            chunking is used. It can either be one value/3-tuple (will be used for all data variables), or a dictionary
+            mapping the data variable with the respective chunk sizes.
         attrs : dict, optional
-            Dictionary mapping data variable names with metadata attributes. This can be an important parameter, when
-            for instance setting the units of a data variable.
-        geotrans : tuple or list, optional
-            Geo-transformation parameters (defaults to (0, 1, 0, 0, 0, 1)).
-                0: Top left x
-                1: W-E pixel resolution
-                2: Rotation, 0 if image is "north up"
-                3: Top left y
-                4: Rotation, 0 if image is "north up"
-                5: N-S pixel resolution (negative value if north-up)
+            Data variable specific attributes. This can be an important parameter, when for instance setting the units
+            of a data variable. Defaults to None. It can either be one dictionary (will be used for all data variables,
+            so maybe the `metadata` parameter is more suitable), or a dictionary mapping the data variable with the
+            respective attributes.
+        geotrans : 6-tuple or list, optional
+            Geo-transformation parameters with the following entries:
+                0: Top-left X coordinate
+                1: W-E pixel sampling
+                2: Rotation, 0 if image is axis-parallel
+                3: Top-left Y coordinate
+                4: Rotation, 0 if image is axis-parallel
+                5: N-S pixel sampling (negative value if North-up)
+            Defaults to (0, 1, 0, 0, 0, 1).
         sref_wkt : str, optional
-            Coordinate Reference System (CRS) in WKT form (defaults to none).
+            Coordinate Reference System (CRS) information in WKT format. Defaults to None.
         metadata : dict, optional
-            Global metadata attributes (defaults to none).
+            Global metadata attributes. Defaults to None.
         nc_format : str, optional
             NetCDF formats:
                 - 'NETCDF4_CLASSIC' (default)
@@ -636,10 +660,10 @@ class NetCdfXrFile:
                 - 'NETCDF3_64BIT_OFFSET',
                 - 'NETCDF3_64BIT_DATA'.
         overwrite : bool, optional
-            Flag if file can be overwritten if it already exists. Defaults to true.
+            Flag if the file can be overwritten if it already exists (defaults to False).
         auto_decode : bool, optional
-            If true, then scale factors and offset values are automatically applied when reading data.
-            Defaults to false.
+            True if data should be decoded according to the information available in its header.
+            False if not (default).
         engine : str, optional
             Specifies what engine should be used in the background to read or write NetCDF data. Defaults to 'netcdf4'.
             See https://docs.xarray.dev/en/stable/generated/xarray.open_dataset.html.
@@ -703,7 +727,7 @@ class NetCdfXrFile:
         Parameters
         ----------
         ds : xarray.Dataset, optional
-            Dataset to write.
+            Dataset used to create a new NetCDF file.
 
         """
 
@@ -755,7 +779,7 @@ class NetCdfXrFile:
         all_variables = self.data_variables + dims
         for variable in all_variables:
             self._compressions[variable] = self._compressions.get(variable, None)
-            ref_chunksizes = self.src[variable].encoding.get('chunksizes', None)  # TODO fix this workaround
+            ref_chunksizes = self.src[variable].encoding.get('chunksizes', None)
             self._chunksizes[variable] = self._chunksizes.get(variable, ref_chunksizes)
             if variable in self.data_variables:
                 ref_scale_factor = self.scale_factors.get(variable, 1)
@@ -786,8 +810,8 @@ class NetCdfXrFile:
             the raster is used.
         data_variables : list, optional
             Data variables to read. Default is to read all available data variables.
-        decoder : function, optional
-            Decoding function expecting a xarray.DataArray as input.
+        decoder : callable, optional
+            Decoding function expecting an xarray.DataArray as input.
         decoder_kwargs : dict, optional
             Keyword arguments for the decoder.
 
@@ -828,7 +852,7 @@ class NetCdfXrFile:
 
     def write(self, ds, data_variables=None, encoder=None, encoder_kwargs=None, compute=True):
         """
-        Write mosaic into a netCDF4 file.
+        Write data to a NetCDF file.
 
         Parameters
         ----------
@@ -836,12 +860,12 @@ class NetCdfXrFile:
             Dataset to write to disk.
         data_variables : list, optional
             Data variables to write. Default is to write all available data variables.
-        encoder : callable
+        encoder : callable, optional
             Encoding function expecting an xarray.DataArray as input.
         encoder_kwargs : dict, optional
             Keyword arguments for the encoder.
         compute : bool, optional
-            If true compute immediately (default), otherwise only a delayed dask array is stored.
+            If True (default), compute immediately, otherwise only a delayed dask array is stored.
 
         """
         self._open(ds)
@@ -914,3 +938,7 @@ class NetCdfXrFile:
 
     def __exit__(self, *args, **kwargs):
         self.close()
+
+
+if __name__ == '__main__':
+    pass

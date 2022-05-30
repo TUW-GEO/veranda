@@ -1,3 +1,5 @@
+""" Manages I/O for a GeoTIFF file. """
+
 import os
 import struct
 import numpy as np
@@ -9,7 +11,7 @@ from veranda.raster.gdalport import NUMPY_TO_GDAL_DTYPE, GDAL_TO_NUMPY_DTYPE
 
 
 class GeoTiffFile:
-    """ GDAL wrapper for reading and writing GeoTIFF files. """
+    """ GDAL wrapper for reading or writing a GeoTIFF file. """
     def __init__(self, filepath, mode='r', geotrans=(0, 1, 0, 0, 0, 1), sref_wkt=None, shape=None,
                  compression='LZW', metadata=None, is_bigtiff=False, is_tiled=True, blocksize=(512, 512),
                  n_bands=1,  dtypes='uint8', scale_factors=1, offsets=0, nodatavals=255, color_tbls=None,
@@ -27,33 +29,33 @@ class GeoTiffFile:
                 - 'w' : write
         geotrans : 6-tuple or list, optional
             Geo-transformation parameters with the following entries:
-                0: Top left x
-                1: W-E pixel resolution
-                2: Rotation, 0 if image is "north up"
-                3: Top left y
-                4: Rotation, 0 if image is "north up"
-                5: N-S pixel resolution (negative value if North up)
+                0: Top-left X coordinate
+                1: W-E pixel sampling
+                2: Rotation, 0 if image is axis-parallel
+                3: Top-left Y coordinate
+                4: Rotation, 0 if image is axis-parallel
+                5: N-S pixel sampling (negative value if North-up)
             Defaults to (0, 1, 0, 0, 0, 1).
         sref_wkt : str, optional
-            Coordinate Reference System (CRS) in WKT format. Defaults to none.
+            Coordinate Reference System (CRS) information in WKT format. Defaults to None.
         shape : 2-tuple, optional
-            2D shape of the raster. Defaults to (1, 1).
+            2D shape of the raster. Defaults to None, i.e. (1, 1).
         compression : str, optional
             Set the compression to use. Defaults to 'LZW'.
         metadata : dict, optional
-            Dictionary representing the metadata of the GeoTIFF file. Defaults to none.
+            Dictionary representing the metadata of the GeoTIFF file. Defaults to None.
         is_bigtiff : bool, optional
-            True if GeoTIFF file should be managed as a 'BIGTIFF' (required if the file will be above 4 GB).
-            Defaults to false.
+            True if the GeoTIFF file should be managed as a 'BIGTIFF' (required if the file will be above 4 GB).
+            Defaults to False.
         is_tiled : bool, optional
-            True if the mosaic should be tiled (default). False if the mosaic should be stripped.
+            True if the data should be tiled (default). False if the data should be stripped.
         blocksize : 2-tuple, optional
-            Blocksize of the mosaic blocks in the GeoTIFF file. Defaults to (512, 512).
+            Blocksize of the data blocks in the GeoTIFF file. Defaults to (512, 512).
         n_bands : int, optional
-            Number of bands in the GeoTIFF file. Defaults to 1.
+            Number of bands in the GeoTIFF file (relevant when creating a new GeoTIFF file). Defaults to 1.
         dtypes : dict or str, optional
             Data types used for de- or encoding (NumPy-style). Defaults to 'uint8'. It can either be one value (will
-            be used for all bands), or a dictionary mapping the band number with the respective mosaic type.
+            be used for all bands), or a dictionary mapping the band number with the respective data type.
         scale_factors : dict or number, optional
             Scale factor used for de- or encoding. Defaults to 1. It can either be one value (will be used for all
             bands), or a dictionary mapping the band number with the respective scale factor.
@@ -61,8 +63,8 @@ class GeoTiffFile:
             Offset used for de- or encoding. Defaults to 0. It can either be one value (will be used for all bands),
             or a dictionary mapping the band number with the respective offset.
         nodatavals : dict or int, optional
-            No mosaic value used for de- or encoding. Defaults to 255. It can either be one value (will be used for all
-            bands), or a dictionary mapping the band number with the respective no mosaic value.
+            No data value used for de- or encoding. Defaults to 255. It can either be one value (will be used for all
+            bands), or a dictionary mapping the band number with the respective no data value.
         color_tbls : dict or gdal.ColorTable, optional
             GDAL color tables. Defaults to None. It can either be one value (will be used for all bands), or a
             dictionary mapping the band number with the respective color table.
@@ -70,9 +72,9 @@ class GeoTiffFile:
             GDAL color interpretation value. Defaults to None. It can either be one value (will be used for all bands),
             or a dictionary mapping the band number with the respective color interpretation value.
         overwrite : bool, optional
-            Flag if the file can be overwritten if it already exists (defaults to false).
+            Flag if the file can be overwritten if it already exists (defaults to False).
         auto_decode : bool, optional
-            True if mosaic should be decoded according to the information available in its metadata.
+            True if data should be decoded according to the information available in its header.
             False if not (default).
 
         """
@@ -133,7 +135,7 @@ class GeoTiffFile:
         Returns
         -------
         bool :
-            True if the given file is a BigTIFF, else false.
+            True if the given file is a BigTIFF, else False.
 
         """
         with open(filepath, 'rb') as f:
@@ -154,7 +156,7 @@ class GeoTiffFile:
 
     @property
     def nodatavals(self):
-        """ list of numbers : No mosaic values of the different bands. """
+        """ list of numbers : No data values of the different bands. """
         return list(self._nodatavals.values())
 
     @property
@@ -174,7 +176,7 @@ class GeoTiffFile:
 
     def _open(self):
         """
-        Helper function supporting the different file modes, i.e. either opening existing files or creating a new
+        Helper function supporting the different file modes, i.e. either opening an existing file or creating a new
         file source.
 
         """
@@ -250,7 +252,7 @@ class GeoTiffFile:
 
     def read(self, row=0, col=0, n_rows=None, n_cols=None, bands=None, decoder=None, decoder_kwargs=None):
         """
-        Read mosaic from a GeoTIFF file.
+        Read data from a GeoTIFF file.
 
         Parameters
         ----------
@@ -265,16 +267,16 @@ class GeoTiffFile:
             Number of columns of the reading window (counted from `col`). If None (default), then the full extent of
             the raster is used.
         bands : int or tuple or list, optional
-            Band numbers of the GeoTIFF file to read mosaic from. Defaults to none, i.e. all available bands will be
+            Band numbers of the GeoTIFF file to read data from. Defaults to None, i.e. all available bands will be
             used.
-        decoder : function, optional
+        decoder : callable, optional
             Decoding function expecting a NumPy array as input.
         decoder_kwargs : dict, optional
             Keyword arguments for the decoder.
 
         Returns
         -------
-        mosaic : dict
+        data : dict
             Dictionary mapping band numbers to NumPy arrays read from disk.
 
         """
@@ -417,9 +419,15 @@ def create_vrt_file(filepaths, vrt_filepath, shape, sref_wkt, geotrans, bands=1)
     shape : 2-tuple
         Shape (rows, columns) of the raster stack.
     sref_wkt : str
-        Coordinate reference system in WKT format.
-    geotrans : 6-tuple
-        GDAL's geotransformation parameters.
+        Coordinate Reference System (CRS) information in WKT format.
+    geotrans : 6-tuple or list, optional
+        Geo-transformation parameters with the following entries:
+            0: Top-left X coordinate
+            1: W-E pixel sampling
+            2: Rotation, 0 if image is axis-parallel
+            3: Top-left Y coordinate
+            4: Rotation, 0 if image is axis-parallel
+            5: N-S pixel sampling (negative value if North-up)
     bands : tuple or list or int, optional
         Band number(s). Defaults to 1.
 

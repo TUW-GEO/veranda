@@ -1,7 +1,4 @@
-"""
-Some handy functions using GDAL to manage geospatial raster mosaic.
-
-"""
+""" Some handy functions using GDAL to manage geospatial raster data. """
 
 import os
 import subprocess
@@ -32,7 +29,7 @@ GDAL_TO_NUMPY_DTYPE = {gdal.GDT_Byte: "uint8",
                        gdal.GDT_CFloat32: "cfloat32",
                        gdal.GDT_CFloat64: "cfloat64"}
 
-GDAL_RESAMPLE_TYPE = {"nearst": gdal.GRA_NearestNeighbour,
+GDAL_RESAMPLE_TYPE = {"nearest": gdal.GRA_NearestNeighbour,
                       "bilinear": gdal.GRA_Bilinear,
                       "cubic": gdal.GRA_Cubic,
                       "cubicspline": gdal.GRA_CubicSpline,
@@ -42,32 +39,32 @@ GDAL_RESAMPLE_TYPE = {"nearst": gdal.GRA_NearestNeighbour,
                       }
 
 
-def dtype_np2gdal(datatype):
+def dtype_np2gdal(np_dtype):
     """
-    Get GDAL mosaic type from NumPy-style datatype.
+    Get GDAL data type from a NumPy-style data type.
 
     Parameters
     ----------
-    datatype :  str
-        Data type string in python such as "uint8", "float32" and so forth.
+    np_dtype :  str
+        NumPy-style data type, e.g. "uint8".
 
     Returns
     -------
-    gdal_datatype : str
-        Gdal mosaic type.
+    str :
+        GDAL data type.
 
     """
-    return NUMPY_TO_GDAL_DTYPE.get(datatype.lower())
+    return NUMPY_TO_GDAL_DTYPE.get(np_dtype.lower())
 
 
 def rtype_str2gdal(resampling_method):
     """
-    Get GDAL resample type from resampling method string.
+    Get GDAL resample type from resampling method.
 
     Parameters
     ----------
     resampling_method : str
-        Resampling method.
+        Resampling method, e.g. "cubic".
 
     Returns
     -------
@@ -78,39 +75,39 @@ def rtype_str2gdal(resampling_method):
     return GDAL_RESAMPLE_TYPE.get(resampling_method.lower())
 
 
-def call_gdal_util(util_name, gdal_path=None, src_files=None, dst_file=None,
-                   options={}):
+def call_gdal_util(util_name, src_files, dst_file=None, options=None, gdal_path=None):
     """
-    Call gdal utility to run the operation.
-    http://www.gdal.org/gdal_utilities.html
+    Call a GDAL utility to run a GDAL operation (see http://www.gdal.org/gdal_utilities.html).
 
     Parameters
     ----------
-    util_name : string
-        pre-defined name of the utility
-        (e.g. "gdal_translate": convert raster mosaic between different formats,
-        potentially performing some operations like subsettings, resampling,
-        and rescaling pixels in the process.)
-    src_files : string
-        The source dataset name. It can be either file name,
-        URL of mosaic source or subdataset name for multi-dataset files.
-    dst_file : string
-        The destination file name.
-    gdal_path : string
-        It the path where your gdal installed. If gpt command can not found by
-        the os automatically, you should give this path.
-    options : dict
-        A dictionary of options. You can find all options at
+    util_name : str
+        Pre-defined name of the utility, e.g. "gdal_translate", which converts raster data between different formats,
+        potentially performing some operations like sub-settings, resampling, or rescaling pixels.
+    src_files : str or list of str
+        The name(s) of the source data. It can be either a file path, URL to the data source or a sub-dataset name for
+        multi-dataset file.
+    dst_file : str, optional
+        Full system path to the output file. Defaults to None, i.e. the GDAL utility itself deals with defining a file
+        path.
+    options : dict, optional
+        A dictionary storing additional settings for the process. You can find all options at
         http://www.gdal.org/gdal_utilities.html
+    gdal_path : str, optional
+        The path where your GDAL utilities are installed. By default, this function tries to look up this path in the
+        environment variable "GDAL_UTIL_HOME". If this variable is not set, then `gdal_path` must be provided as a
+        key-word argument.
 
     Returns
     -------
-    succeed : bool
+    successful : bool
         True if process was successful.
     output : str
         Console output.
 
     """
+    options = options or dict()
+
     # define specific options
     _opt_2b_in_quote = ["-mo", "-co"]
 
@@ -152,37 +149,39 @@ def call_gdal_util(util_name, gdal_path=None, src_files=None, dst_file=None,
         cmd.append('"%s"' % dst_file)
 
     output = subprocess.check_output(" ".join(cmd), shell=True, cwd=gdal_path)
-    succeed = _analyse_gdal_output(str(output))
+    successful = _analyse_gdal_output(str(output))
 
-    return succeed, output
+    return successful, output
 
 
 def _find_gdal_path():
     """
-    Find the gdal installed path from the system enviroment variables.
+    Looks-up the GDAL installation path from the system environment variables, i.e. if "GDAL_UTIL_HOME" is set.
 
     Returns
     -------
     path : str
-        GDAL install path.
+        GDAL installation path, where all GDAL utilities are located.
+
     """
-    evn_name = "GDAL_UTIL_HOME"
-    return os.environ[evn_name] if evn_name in os.environ else None
+    env_name = "GDAL_UTIL_HOME"
+    return os.environ[env_name] if env_name in os.environ else None
 
 
 def _analyse_gdal_output(output):
     """
-    Analyse the output from gpt to find if it executes successfully.
+    Analyses console output from a GDAL utility, i.e. it tries to determine if a process was successful or not.
 
     Parameters
     ----------
     output : str
-        Ouptut from gpt.
+        Console output.
 
     Returns
     -------
-    flag : boolean
-        False if "Error" is found and True if not.
+    bool :
+        True if the process completed success, else False.
+
     """
     # return false if "Error" is found.
     if 'error' in output.lower():
@@ -195,45 +194,49 @@ def _analyse_gdal_output(output):
         return False
 
 
-def gen_qlook(src_file, dst_file=None, src_nodata=None, gdal_path=None,
-              min_stretch=None, max_stretch=None, resize_factor=('3%', '3%'), ct=None, scale=True,
-              output_format="GTiff"):
+def gen_qlook(src_file, dst_file=None, src_nodata=None, stretch=None, resize_factor=('3%', '3%'),
+              ct=None, scale=True, output_format="GTiff", gdal_path=None):
     """
+    Generates a quick-look image.
+
     Parameters
     ----------
-
-    src_file: string (required)
-        The source dataset name. It can be either file name (full path)
-        URL of mosaic source or subdataset name for multi-dataset files.
-    dst_file: string (optional)
-        The destination file name (full path).
-        if not provided the default of dst_file is src_file name+ '_qlook'
-    src_nodata: string (optional)
-        Set nodata masking values for input image
-    gdal_path : string (optional)
-        The path where your gdal installed. If gdal path is found by
-        the os automatically, you should give this path.
-    min_stretch, max_stretch: (optional)
-        rescale the input pixels values from
-        the range min_stretch to max_stretch to the range 0 to 255.
-        If omitted pixel values will be scaled to minimum and maximum
-    resize_factor: (optional)
-        Set the size of the output file. Outsize is in pixels and lines
-        unless '%' is attached in which case it is as a fraction of the
-        input image size. The default is ('3%', '3%')
-    ct: gdal ColorTable class (optional)
-    output_format: str
-        Output format of the quicklook. At the moment we support 'GTiff'
-        and 'jpeg'
+    src_file: str
+        The name(s) of the source data. It can be either a file path, URL to the data source or a sub-dataset name for
+        multi-dataset file.
+    dst_file: str, optional
+        Full system path to the output file. If not provided, the output file path will be a combination of `src_file`
+        + '_qlook'.
+    src_nodata: int, optional
+        No data value of the input image. Defaults to None. If it is not None, then it will be transformed to 0 if it
+        is smaller than minimum value range or to 255 if it is larger than the maximum value range.
+    stretch : 2-tuple of number, optional
+        Minimum and maximum input pixel value to consider for scaling pixels to 0-255. If omitted (default), pixel
+        values will be scaled to the minimum and maximum value.
+    resize_factor : 2-tuple of str, optional
+        Size of the output file in pixels and lines, unless '%' is attached in which case it is as a fraction of the
+        input image size. The default is ('3%', '3%').
+    ct : gdal.ColorTable, optional
+        GDAL's color table used for displaying the quick-look data. Defaults to None.
+    scale : bool, optional
+        If True, pixel values will be scaled to 0-255 if `stretch` is given.
+    output_format : str
+        Output format of the quick-look. At the moment, 'GTiff' (default) and 'JPEG' are supported.
+    gdal_path : str, optional
+        The path where your GDAL utilities are installed. By default, this function tries to look up this path in the
+        environment variable "GDAL_UTIL_HOME". If this variable is not set, then `gdal_path` must be provided as a
+        key-word argument.
 
     Returns
     -------
-    succeed : bool
+    successful : bool
         True if process was successful.
     output : str
         Console output.
 
     """
+    stretch = stretch or (None, None)
+    min_stretch, max_stretch = stretch
 
     output_format = output_format.lower()
     f_ext = {'gtiff': 'tif',
@@ -262,7 +265,7 @@ def gen_qlook(src_file, dst_file=None, src_nodata=None, gdal_path=None,
 
     if scale:
         options["-scale"] = ' '
-    if scale and (min_stretch is not None)and(max_stretch is not None):
+    if scale and (min_stretch is not None) and (max_stretch is not None):
         options['-scale'] = (min_stretch, max_stretch, 0, 255)
         # stretching should be done differently if nodata value exist.
         # depending on nodatavalue, first or last position is reserved for nodata value
@@ -275,7 +278,7 @@ def gen_qlook(src_file, dst_file=None, src_nodata=None, gdal_path=None,
                 options['-a_nodata'] = 255
 
     # call gdal_translate to resize input file
-    succeed, output = call_gdal_util('gdal_translate', src_files=src_file,
+    successful, output = call_gdal_util('gdal_translate', src_files=src_file,
                                      dst_file=dst_file, gdal_path=gdal_path,
                                      options=options)
 
@@ -287,7 +290,7 @@ def gen_qlook(src_file, dst_file=None, src_nodata=None, gdal_path=None,
         if ds.RasterCount == 1:
             ds.GetRasterBand(1).SetRasterColorTable(ct)
 
-    return succeed, output
+    return successful, output
 
 
 if __name__ == '__main__':

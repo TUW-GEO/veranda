@@ -186,7 +186,7 @@ class GeoTiffDataTest(unittest.TestCase):
         data = np.random.randn(num_files, ysize, xsize)
         ds = xr.Dataset({band_name: (dims, data)}, coords=coords)
 
-        with GeoTiffWriter(ds_mosaic, data=ds, file_dimension='time', dirpath=self.path,
+        with GeoTiffWriter(ds_mosaic, data=ds, stack_dimension='time', dirpath=self.path,
                            fn_pattern='{time}.tif', fn_formatter={'time': lambda x: x.strftime('%Y%m%d')}) as gt_writer:
             gt_writer.export()
             filepaths = list(gt_writer.file_register['filepath'])
@@ -213,7 +213,7 @@ class GeoTiffDataTest(unittest.TestCase):
         ysize = 50
         band_names = ['data1', 'data2']
 
-        ds_tile = Tile(ysize, xsize, SpatialRef(4326))
+        ds_tile = Tile(ysize, xsize, SpatialRef(4326), name='0')
         ds_mosaic = MosaicGeometry.from_tile_list([ds_tile])
 
         dims = ['time', 'y', 'x']
@@ -225,7 +225,7 @@ class GeoTiffDataTest(unittest.TestCase):
         attr2 = {'unit': 'dB', 'fill_value': -9999}
         ds = xr.Dataset({band_names[0]: (dims, data, attr1), band_names[1]: (dims, data, attr2)}, coords=coords)
 
-        with GeoTiffWriter(ds_mosaic, data=ds, file_dimension='time', dirpath=self.path,
+        with GeoTiffWriter(ds_mosaic, data=ds, stack_dimension='time', dirpath=self.path,
                            fn_pattern='{time}.tif', fn_formatter={'time': lambda x: x.strftime('%Y%m%d')}) as gt_writer:
             gt_writer.export()
             filepaths = list(gt_writer.file_register['filepath'])
@@ -275,7 +275,7 @@ class GeoTiffDataTest(unittest.TestCase):
         ds = xr.Dataset({band_name: (dims, data)}, coords=coords)
         layers = dates[layer_ids]
 
-        with GeoTiffWriter(ds_mosaic, data=ds, file_dimension='time', dirpath=self.path,
+        with GeoTiffWriter(ds_mosaic, data=ds, stack_dimension='time', dirpath=self.path,
                            fn_pattern='{time}.tif', fn_formatter={'time': lambda x: x.strftime('%Y%m%d')}) as gt_writer:
             gt_writer.select_layers(layers, inplace=True)
             ul_data = gt_writer.select_px_window(0, 0, height=25, width=30)
