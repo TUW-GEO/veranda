@@ -169,7 +169,7 @@ class NetCdfReader(RasterDataReader):
 
         return cls(file_register, mosaic_geom, stack_dimension=stack_dimension, **kwargs)
 
-    def read(self, data_variables=None, engine='netcdf4', parallel=True, auto_decode=False,
+    def read(self, data_variables=None, engine='netcdf4', parallel=True, compute=True, auto_decode=False,
              decoder=None, decoder_kwargs=None, **kwargs):
         """
         Reads NetCdf data from disk and assigns it to the class.
@@ -184,6 +184,8 @@ class NetCdfReader(RasterDataReader):
                 - 'xarray' : Uses xarray's `open_mfdataset` function.
         parallel : bool, optional
             Flag to activate parallelisation or not when using 'xarray' as an engine. Defaults to True.
+        compute : bool, optional
+            True if values from a dask array should be loaded into RAM (default).
         auto_decode : bool, optional
             True if NetCDF data should be decoded according to the information available in its metadata. Defaults to
             False.
@@ -204,7 +206,7 @@ class NetCdfReader(RasterDataReader):
                                        **kwargs)
         elif engine == 'xarray':
             data = self.__read_xarray(new_tile, data_variables=data_variables, parallel=parallel,
-                                      agg_dim=self._file_dim, auto_decode=auto_decode, decoder=decoder,
+                                      agg_dim=self._file_dim, compute=compute, auto_decode=auto_decode, decoder=decoder,
                                       decoder_kwargs=decoder_kwargs, **kwargs)
         else:
             err_msg = f"Engine '{engine}' is not supported!"
@@ -322,6 +324,7 @@ class NetCdfReader(RasterDataReader):
                                       coords='minimal', compat='override', parallel=parallel,
                                       mask_and_scale=auto_decode, **kwargs)
             data_tile = dict()
+            coords = None
             for data_variable in data_variables:
                 xr_sliced = xr_ds[data_variable][..., raster_access.src_row_slice, raster_access.dst_col_slice]
                 if compute:
@@ -337,7 +340,8 @@ class NetCdfReader(RasterDataReader):
                                         dtype=self._ref_dtypes[data_variable],
                                         **decoder_kwargs)
                 data_tile[data_variable] = xr_sliced
-            xr_ds = xr.Dataset(data_tile, coords=xr_ds.coords, attrs=xr_ds.attrs)
+                coords = xr_sliced.coords
+            xr_ds = xr.Dataset(data_tile, coords=coords, attrs=xr_ds.attrs)
             data.append(xr_ds)
 
         return xr.combine_by_coords(data)
