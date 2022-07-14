@@ -330,7 +330,7 @@ class NetCdfReader(RasterDataReader):
                 if compute:
                     xr_sliced = xr_sliced.compute()
                 if tile.mask is not None:
-                    xr_sliced = xr_sliced.where(~tile.mask.astype(bool), self._ref_nodatavals[data_variable])
+                    xr_sliced = xr_sliced.where(tile.mask.astype(bool), self._ref_nodatavals[data_variable])
                 if decoder:
                     xr_sliced = decoder(xr_sliced,
                                         nodataval=self._ref_nodatavals[data_variable],
