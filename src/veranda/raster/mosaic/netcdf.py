@@ -279,8 +279,8 @@ class NetCdfReader(RasterDataReader):
 
         return xr.combine_by_coords(data)
 
-    def __read_xarray(self, new_tile, data_variables=None, parallel=True, agg_dim='layer_id', auto_decode=False,
-                      decoder=None, decoder_kwargs=None, **kwargs):
+    def __read_xarray(self, new_tile, data_variables=None, parallel=True, agg_dim='layer_id', compute=True,
+                      auto_decode=False, decoder=None, decoder_kwargs=None, **kwargs):
         """
         Reads NetCDF data using the `open_mfdataset` function of the xarray library.
 
@@ -294,6 +294,8 @@ class NetCdfReader(RasterDataReader):
             Flag to activate parallelisation or not when using 'xarray' as an engine. Defaults to True.
         agg_dim : str, optional
             Dimension to aggregate on (defaults to 'layer_id').
+        compute : bool, optional
+            True if values from a dask array should be loaded into RAM (default).
         auto_decode : bool, optional
             True if NetCDF data should be decoded according to the information available in its metadata. Defaults to
             False.
@@ -322,6 +324,8 @@ class NetCdfReader(RasterDataReader):
             data_tile = dict()
             for data_variable in data_variables:
                 xr_sliced = xr_ds[data_variable][..., raster_access.src_row_slice, raster_access.dst_col_slice]
+                if compute:
+                    xr_sliced = xr_sliced.compute()
                 if tile.mask is not None:
                     xr_sliced = xr_sliced.where(~tile.mask.astype(bool), self._ref_nodatavals[data_variable])
                 if decoder:
