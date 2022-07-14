@@ -384,7 +384,7 @@ class GeoTiffReader(RasterDataReader):
 
         coord_dict = dict()
         for coord in self._file_coords:
-            coord_dict[coord] = self._file_register[coord]
+            coord_dict[coord] = list(self._file_register[coord])
 
         coord_dict[self._ref_space_dims[0]] = self._data_geom.y_coords
         coord_dict[self._ref_space_dims[1]] = self._data_geom.x_coords
@@ -593,7 +593,7 @@ def read_vrt_stack(tile_id):
 
     src = gdal.Open(vrt_filepath, gdal.GA_ReadOnly)
     vrt_data = src.ReadAsArray(*gt_access.gdal_args)
-    stack_idxs = np.array(layer_ids) - 1
+    stack_idxs = np.arange(len(layer_ids))#np.array(layer_ids) - 1
     for band in bands:
         band_data = vrt_data[(band - 1)::n_bands, ...]
         scale_factor = src.GetRasterBand(band).GetScale()

@@ -170,7 +170,7 @@ class NetCdfReader(RasterDataReader):
         return cls(file_register, mosaic_geom, stack_dimension=stack_dimension, **kwargs)
 
     def read(self, data_variables=None, engine='netcdf4', parallel=True, auto_decode=False,
-             decoder=None, decoder_kwargs=None):
+             decoder=None, decoder_kwargs=None, **kwargs):
         """
         Reads NetCdf data from disk and assigns it to the class.
 
@@ -199,11 +199,13 @@ class NetCdfReader(RasterDataReader):
                                     y_pixel_size=self._mosaic.y_pixel_size,
                                     name='0')
         if engine == 'netcdf4':
-            data = self.__read_netcdf4(new_tile, data_variables=data_variables, auto_decode=auto_decode,
-                                       decoder=decoder, decoder_kwargs=decoder_kwargs)
+            data = self.__read_netcdf4(new_tile, data_variables=data_variables, agg_dim=self._file_dim,
+                                       auto_decode=auto_decode, decoder=decoder, decoder_kwargs=decoder_kwargs,
+                                       **kwargs)
         elif engine == 'xarray':
             data = self.__read_xarray(new_tile, data_variables=data_variables, parallel=parallel,
-                                      auto_decode=auto_decode, decoder=decoder, decoder_kwargs=decoder_kwargs)
+                                      agg_dim=self._file_dim, auto_decode=auto_decode, decoder=decoder,
+                                      decoder_kwargs=decoder_kwargs, **kwargs)
         else:
             err_msg = f"Engine '{engine}' is not supported!"
             raise ValueError(err_msg)
@@ -213,7 +215,8 @@ class NetCdfReader(RasterDataReader):
         self._add_grid_mapping()
         return self
 
-    def __read_netcdf4(self, new_tile, data_variables=None, auto_decode=False, decoder=None, decoder_kwargs=None):
+    def __read_netcdf4(self, new_tile, data_variables=None, agg_dim='layer_id', auto_decode=False,
+                       decoder=None, decoder_kwargs=None, **kwargs):
         """
         Reads NetCDF data using the `MFDataset` class of the netCDF4 library.
 
@@ -223,6 +226,8 @@ class NetCdfReader(RasterDataReader):
             Target tile representing the spatial extent of the data window to read from.
         data_variables : list, optional
             Data variables to read. Default is to read all available data variables.
+        agg_dim : str, optional
+            Dimension to aggregate on (defaults to 'layer_id').
         auto_decode : bool, optional
             True if NetCDF data should be decoded according to the information available in its metadata. Defaults to
             False.
@@ -245,7 +250,7 @@ class NetCdfReader(RasterDataReader):
             raster_access = RasterAccess(tile, new_tile)
             file_register = self.file_register.loc[self.file_register['tile_id'] == tile_id]
             filepaths = list(file_register['filepath'])
-            nc_ds = MFDataset(filepaths, aggdim='time')
+            nc_ds = MFDataset(filepaths, aggdim=agg_dim)
             nc_ds.set_auto_maskandscale(auto_decode)
             data_tile = dict()
             metadata = dict()
@@ -274,8 +279,8 @@ class NetCdfReader(RasterDataReader):
 
         return xr.combine_by_coords(data)
 
-    def __read_xarray(self, new_tile, data_variables=None, parallel=True, auto_decode=False, decoder=None,
-                      decoder_kwargs=None):
+    def __read_xarray(self, new_tile, data_variables=None, parallel=True, agg_dim='layer_id', auto_decode=False,
+                      decoder=None, decoder_kwargs=None, **kwargs):
         """
         Reads NetCDF data using the `open_mfdataset` function of the xarray library.
 
@@ -287,6 +292,8 @@ class NetCdfReader(RasterDataReader):
             Data variables to read. Default is to read all available data variables.
         parallel : bool, optional
             Flag to activate parallelisation or not when using 'xarray' as an engine. Defaults to True.
+        agg_dim : str, optional
+            Dimension to aggregate on (defaults to 'layer_id').
         auto_decode : bool, optional
             True if NetCDF data should be decoded according to the information available in its metadata. Defaults to
             False.
@@ -309,13 +316,14 @@ class NetCdfReader(RasterDataReader):
             raster_access = RasterAccess(tile, new_tile)
             file_register = self.file_register.loc[self.file_register['tile_id'] == tile_id]
             filepaths = file_register['filepath']
-            xr_ds = xr.open_mfdataset(filepaths, concat_dim="time", combine="nested", data_vars='minimal',
+            xr_ds = xr.open_mfdataset(filepaths, concat_dim=agg_dim, combine="nested", data_vars='minimal',
                                       coords='minimal', compat='override', parallel=parallel,
-                                      mask_and_scale=auto_decode)
+                                      mask_and_scale=auto_decode, **kwargs)
             data_tile = dict()
             for data_variable in data_variables:
                 xr_sliced = xr_ds[data_variable][..., raster_access.src_row_slice, raster_access.dst_col_slice]
-                xr_sliced = xr_sliced.where(~tile.mask.astype(bool), self._ref_nodatavals[data_variable])
+                if tile.mask is not None:
+                    xr_sliced = xr_sliced.where(~tile.mask.astype(bool), self._ref_nodatavals[data_variable])
                 if decoder:
                     xr_sliced = decoder(xr_sliced,
                                         nodataval=self._ref_nodatavals[data_variable],

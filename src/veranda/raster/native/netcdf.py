@@ -472,7 +472,8 @@ class NetCdf4File:
                 stack_vals = netCDF4.date2num(ds[stack_dim].to_index().to_pydatetime(), units, calendar=calendar)
             else:
                 stack_vals = ds[stack_dim]
-            self.src_vars[stack_dim][append_start:] = stack_vals
+                n_stack_vals = len(stack_vals)
+            self.src_vars[stack_dim][append_start:append_start + n_stack_vals] = stack_vals
             ds_idxs.append(slice(append_start, None))
 
         space_dims = list(self.space_dims)
