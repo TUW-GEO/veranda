@@ -326,7 +326,7 @@ class NetCdfReader(RasterDataReader):
             data_tile = dict()
             coords = None
             for data_variable in data_variables:
-                xr_sliced = xr_ds[data_variable][..., raster_access.src_row_slice, raster_access.dst_col_slice]
+                xr_sliced = xr_ds[data_variable][..., raster_access.src_row_slice, raster_access.src_col_slice]
                 if compute:
                     xr_sliced = xr_sliced.compute()
                 if tile.mask is not None:
