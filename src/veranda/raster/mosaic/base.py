@@ -10,6 +10,7 @@ import xarray as xr
 import pandas as pd
 import numpy as np
 from affine import Affine
+from typing import List
 
 from geospade.tools import any_geom2ogr_geom
 from geospade.tools import rel_extent
@@ -51,23 +52,23 @@ class RasterAccess:
         self.dst_window = (min_row, min_col, max_row, max_col)
 
     @property
-    def src_row_slice(self):
-        """ slice : Indices for the rows of the data to access. """
+    def src_row_slice(self) -> slice:
+        """ Indices for the rows of the data to access. """
         return slice(self.src_window[0], self.src_window[2] + 1)
 
     @property
-    def src_col_slice(self):
-        """ slice : Indices for the columns of the data to access. """
+    def src_col_slice(self) -> slice:
+        """ Indices for the columns of the data to access. """
         return slice(self.src_window[1], self.src_window[3] + 1)
 
     @property
-    def dst_row_slice(self):
-        """ slice : Indices for the rows of the data to assign. """
+    def dst_row_slice(self) -> slice:
+        """ Indices for the rows of the data to assign. """
         return slice(self.dst_window[0], self.dst_window[2] + 1)
 
     @property
-    def dst_col_slice(self):
-        """ slice : Indices for the cols of the data to assign. """
+    def dst_col_slice(self) -> slice:
+        """ Indices for the cols of the data to assign. """
         return slice(self.dst_window[1], self.dst_window[3] + 1)
 
 
@@ -120,38 +121,38 @@ class RasterData(metaclass=abc.ABCMeta):
             self._file_register['file_id'] = [None] * len(self._file_register)
 
     @property
-    def mosaic(self):
-        """ geospade.raster.MosaicGeometry : Mosaic geometry of the raster mosaic files. """
+    def mosaic(self) -> MosaicGeometry:
+        """ Mosaic geometry of the raster mosaic files. """
         return self._mosaic
 
     @property
-    def data_geom(self):
-        """ geospade.raster.Tile : Tile geometry of the raster mosaic files. """
+    def data_geom(self) -> RasterGeometry:
+        """ Raster/tile geometry of the raster mosaic files. """
         return self._data_geom
 
     @property
-    def n_layers(self):
-        """ int : Maximum number of layers. """
+    def n_layers(self) -> int:
+        """ Maximum number of layers. """
         return self._file_register.groupby(["tile_id"])["tile_id"].count().max()
 
     @property
-    def n_tiles(self):
-        """ int : Number of tiles. """
+    def n_tiles(self) -> int:
+        """ Number of tiles. """
         return len(self._mosaic.all_tiles)
 
     @property
-    def file_register(self):
-        """ pd.Dataframe : File register of the raster data object. """
+    def file_register(self) -> pd.DataFrame:
+        """ File register of the raster data object. """
         return self._file_register.drop(columns=['file_id'])
 
     @property
-    def filepaths(self):
-        """ list of str : Unique list of file paths stored in the file register. """
+    def filepaths(self) -> List[str]:
+        """ Unique list of file paths stored in the file register. """
         return list(set(self._file_register['filepath']))
 
     @property
-    def data(self):
-        """ xr.Dataset : View on internal raster data. """
+    def data(self) -> xr.Dataset:
+        """ View on internal raster data. """
         return self._view_data()
 
     @abc.abstractmethod
@@ -160,7 +161,7 @@ class RasterData(metaclass=abc.ABCMeta):
         pass
 
     @staticmethod
-    def raster_geom_from_data(data, sref=None, **kwargs):
+    def raster_geom_from_data(data, sref=None, **kwargs) -> RasterGeometry:
         """
         Creates a raster geometry from an xarray dataset.
 
@@ -205,7 +206,7 @@ class RasterData(metaclass=abc.ABCMeta):
                 dar = self._data[dvar]
                 self._data[dvar] = dar.where(dar != dar.attrs['_FillValue'])
 
-    def select(self, cmds, inplace=False):
+    def select(self, cmds, inplace=False) -> "RasterData":
         """
         Executes several select operations from a dict/JSON compatible set of commands.
 
@@ -242,7 +243,7 @@ class RasterData(metaclass=abc.ABCMeta):
 
         return self
 
-    def select_tiles(self, tile_names, inplace=False):
+    def select_tiles(self, tile_names, inplace=False) -> "RasterData":
         """
         Selects certain tiles from a raster data object.
 
@@ -269,7 +270,7 @@ class RasterData(metaclass=abc.ABCMeta):
 
         return self
 
-    def select_layers(self, layer_ids, inplace=False):
+    def select_layers(self, layer_ids, inplace=False) -> "RasterData":
         """
         Selects layers according to the given layer IDs.
 
@@ -297,7 +298,7 @@ class RasterData(metaclass=abc.ABCMeta):
 
         return self
 
-    def select_px_window(self, row, col, height=1, width=1, inplace=False):
+    def select_px_window(self, row, col, height=1, width=1, inplace=False) -> "RasterData":
         """
         Selects the pixel coordinates according to the given pixel window.
 
@@ -345,7 +346,7 @@ class RasterData(metaclass=abc.ABCMeta):
 
         return self
 
-    def select_xy(self, x, y, sref=None, inplace=False):
+    def select_xy(self, x, y, sref=None, inplace=False) -> "RasterData":
         """
         Selects a pixel according to the given coordinate tuple.
 
@@ -393,7 +394,7 @@ class RasterData(metaclass=abc.ABCMeta):
 
         return self
 
-    def select_bbox(self, bbox, sref=None, inplace=False):
+    def select_bbox(self, bbox, sref=None, inplace=False) -> "RasterData":
         """
         Selects tile and pixel coordinates according to the given bounding box.
 
@@ -418,7 +419,7 @@ class RasterData(metaclass=abc.ABCMeta):
             return new_raster_data.select_bbox(bbox, sref=sref, inplace=True)
         return self.select_polygon(bbox, apply_mask=False, inplace=inplace)
 
-    def select_polygon(self, polygon, sref=None, apply_mask=True, inplace=False):
+    def select_polygon(self, polygon, sref=None, apply_mask=True, inplace=False) -> "RasterData":
         """
         Selects tile and pixel coordinates according to the given polygon.
 
@@ -467,8 +468,8 @@ class RasterData(metaclass=abc.ABCMeta):
 
         return self
 
-    def _view_data(self):
-        """ xr.Dataset : Returns a subset of the data according to the intersected mosaic and current layer ID's. """
+    def _view_data(self) -> xr.Dataset:
+        """ Returns a subset of the data according to the intersected mosaic and current layer ID's. """
         data = self._data
         if data is not None:
             origin = (self._data_geom.parent_root.ul_x, self._data_geom.parent_root.ul_y)
@@ -549,12 +550,11 @@ class RasterData(metaclass=abc.ABCMeta):
             setattr(result, k, copy.deepcopy(v, memo))
         return result
 
-    def _repr_html_(self):
-        """ str: HTML table representation of the file register of a raster data instance.  """
-        return self.file_register.style.set_properties(subset=['filepath'],
-                                                       **{'text-align': 'right'})._repr_html_()
+    def _repr_html_(self) -> str:
+        """ HTML table representation of the file register of a raster data instance.  """
+        return self.file_register.style.set_properties(subset=['filepath'], **{'text-align': 'right'})._repr_html_()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """
         str : General string representation of a raster data instance, which is the string represenation of its
         file register.
@@ -773,7 +773,7 @@ class RasterDataWriter(RasterData):
         pass
 
     @classmethod
-    def from_xarray(cls, data, file_register, mosaic=None, **kwargs):
+    def from_xarray(cls, data, file_register, mosaic=None, **kwargs) -> "RasterDataWriter":
         """
         Converts an xarray dataset and a file register to a `RasterDataWriter` instance.
 

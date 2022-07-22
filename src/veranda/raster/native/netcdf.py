@@ -9,6 +9,7 @@ import rioxarray as rio
 import xarray as xr
 from osgeo import osr
 from veranda.utils import to_list
+from typing import Tuple
 
 
 class NetCdf4File:
@@ -163,7 +164,7 @@ class NetCdf4File:
             self._open()
 
     @property
-    def raster_shape(self):
+    def raster_shape(self) -> Tuple[int, int]:
         """ 2-tuple: Tuple specifying the shape of the raster (defined by the spatial dimensions). """
         space_dims = list(self.space_dims.keys())
         return len(self.src_vars[space_dims[0]]), len(self.src_vars[space_dims[1]])
@@ -369,7 +370,7 @@ class NetCdf4File:
                     self.src_vars[data_variable].setncattr('grid_mapping', self.gm_name)
 
     def read(self, row=0, col=0, n_rows=None, n_cols=None, data_variables=None, decoder=None,
-             decoder_kwargs=None):
+             decoder_kwargs=None) -> xr.Dataset:
         """
         Read data from a NetCDF file.
 
@@ -472,7 +473,7 @@ class NetCdf4File:
                 stack_vals = netCDF4.date2num(ds[stack_dim].to_index().to_pydatetime(), units, calendar=calendar)
             else:
                 stack_vals = ds[stack_dim]
-                n_stack_vals = len(stack_vals)
+            n_stack_vals = len(stack_vals)
             self.src_vars[stack_dim][append_start:append_start + n_stack_vals] = stack_vals
             ds_idxs.append(slice(append_start, None))
 
@@ -509,7 +510,7 @@ class NetCdf4File:
         self.src.setncatts(ds.attrs)
         self.src.setncatts(self.metadata)
 
-    def __to_dict(self, arg):
+    def __to_dict(self, arg) -> dict:
         """
         Assigns non-iterable object to a dictionary with NetCDF4 variables as keys. If `arg` is already a dictionary the
         same object is returned.
@@ -536,7 +537,7 @@ class NetCdf4File:
         return arg_dict
 
     @staticmethod
-    def get_metadata(src_var):
+    def get_metadata(src_var) -> dict:
         """
         Collects all metadata attributes from a NetCDF4 variable.
 
@@ -557,7 +558,7 @@ class NetCdf4File:
             attrs[key] = getattr(src_var, key)
         return attrs
 
-    def __get_gm_name(self):
+    def __get_gm_name(self) -> str:
         """
         str : The name of the NetCDF4 variable storing information about the CRS, i.e. the variable
         containing an attribute named 'grid_mapping_name'.
@@ -717,7 +718,7 @@ class NetCdfXrFile:
             self._open()
 
     @property
-    def raster_shape(self):
+    def raster_shape(self) -> Tuple[int, int]:
         """ 2-tuple: Tuple specifying the shape of the raster (defined by the spatial dimensions). """
         return len(self.src[self._space_dims[0]]), len(self.src[self._space_dims[1]])
 
@@ -793,7 +794,7 @@ class NetCdfXrFile:
                 self.dtypes[variable] = ref_dtype
 
     def read(self, row=0, col=0, n_rows=None, n_cols=None, data_variables=None, decoder=None,
-             decoder_kwargs=None):
+             decoder_kwargs=None) -> xr.Dataset:
         """
         Read mosaic from netCDF4 file.
 
@@ -901,7 +902,7 @@ class NetCdfXrFile:
         ds_write.to_netcdf(self.filepath, mode=self.mode, format=self.nc_format, engine=self._engine,
                            encoding=encoding, compute=compute, unlimited_dims=unlimited_dims)
 
-    def __to_dict(self, arg):
+    def __to_dict(self, arg) -> dict:
         """
         Assigns non-iterable object to a dictionary with NetCDF variables as keys. If `arg` is already a dictionary the
         same object is returned.

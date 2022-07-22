@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import netCDF4
 from netCDF4 import MFDataset
+from typing import Tuple
 
 from geospade.crs import SpatialRef
 from geospade.raster import Tile
@@ -58,7 +59,7 @@ class NetCdfReader(RasterDataReader):
 
     @classmethod
     def from_filepaths(cls, filepaths, mosaic_class=MosaicGeometry, mosaic_kwargs=None, tile_kwargs=None,
-                       stack_dimension='layer_id', **kwargs):
+                       stack_dimension='layer_id', **kwargs) -> "NetCdfReader":
         """
         Creates a `NetCdfReader` instance as one stack of NetCDF files.
 
@@ -108,7 +109,7 @@ class NetCdfReader(RasterDataReader):
 
     @classmethod
     def from_mosaic_filepaths(cls, filepaths, mosaic_class=MosaicGeometry, mosaic_kwargs=None,
-                              stack_dimension='layer_id', **kwargs):
+                              stack_dimension='layer_id', **kwargs) -> "NetCdfReader":
         """
         Creates a `NetCdfReader` instance as multiple stacks of NetCDF files.
 
@@ -169,8 +170,8 @@ class NetCdfReader(RasterDataReader):
 
         return cls(file_register, mosaic_geom, stack_dimension=stack_dimension, **kwargs)
 
-    def read(self, data_variables=None, engine='netcdf4', parallel=True, compute=True, auto_decode=False,
-             decoder=None, decoder_kwargs=None, **kwargs):
+    def read(self, data_variables=None, engine='netcdf4', agg_dim='time', parallel=True, compute=True, auto_decode=False,
+             decoder=None, decoder_kwargs=None, **kwargs) -> "NetCdfReader":
         """
         Reads NetCdf data from disk and assigns it to the class.
 
@@ -182,6 +183,8 @@ class NetCdfReader(RasterDataReader):
             Engine used in the background to read NetCDF data. The following options are available:
                 - 'netcdf4' : Uses the netCDF4 library to create an `MFDataset` object.
                 - 'xarray' : Uses xarray's `open_mfdataset` function.
+        agg_dim : str, optional
+            Dimension to aggregate on (defaults to 'layer_id').
         parallel : bool, optional
             Flag to activate parallelisation or not when using 'xarray' as an engine. Defaults to True.
         compute : bool, optional
@@ -201,12 +204,12 @@ class NetCdfReader(RasterDataReader):
                                     y_pixel_size=self._mosaic.y_pixel_size,
                                     name='0')
         if engine == 'netcdf4':
-            data = self.__read_netcdf4(new_tile, data_variables=data_variables, agg_dim=self._file_dim,
+            data = self.__read_netcdf4(new_tile, data_variables=data_variables, agg_dim=agg_dim,
                                        auto_decode=auto_decode, decoder=decoder, decoder_kwargs=decoder_kwargs,
                                        **kwargs)
         elif engine == 'xarray':
             data = self.__read_xarray(new_tile, data_variables=data_variables, parallel=parallel,
-                                      agg_dim=self._file_dim, compute=compute, auto_decode=auto_decode, decoder=decoder,
+                                      agg_dim=agg_dim, compute=compute, auto_decode=auto_decode, decoder=decoder,
                                       decoder_kwargs=decoder_kwargs, **kwargs)
         else:
             err_msg = f"Engine '{engine}' is not supported!"
@@ -346,7 +349,7 @@ class NetCdfReader(RasterDataReader):
 
         return xr.combine_by_coords(data)
 
-    def _to_xarray(self, data, tile, times, metadata):
+    def _to_xarray(self, data, tile, times, metadata) -> xr.Dataset:
         """
         Converts NetCDF data being available as a NumPy array to an xarray dataset.
 
@@ -434,7 +437,7 @@ class NetCdfWriter(RasterDataWriter):
                          stack_coords=stack_coords, dirpath=dirpath, fn_pattern=fn_pattern, fn_formatter=fn_formatter)
 
     @classmethod
-    def from_data(self, data, filepath, mosaic=None, **kwargs):
+    def from_data(self, data, filepath, mosaic=None, **kwargs) -> "NetCdfWriter":
         """
         Creates `NetCdfWriter` instance from an xarray.Dataset instance and a target file path, i.e. this function
         should help to write/export the whole image stack to one file.

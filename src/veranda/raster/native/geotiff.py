@@ -4,6 +4,7 @@ import os
 import struct
 import numpy as np
 from osgeo import gdal
+from typing import List
 import xml.etree.ElementTree as ET
 
 from veranda.utils import to_list
@@ -118,12 +119,12 @@ class GeoTiffFile:
             self._open()
 
     @property
-    def n_bands(self):
-        """ int : Number of bands. """
+    def n_bands(self) -> int:
+        """ Number of bands. """
         return len(self.bands)
 
     @staticmethod
-    def is_file_bigtiff(filepath):
+    def is_file_bigtiff(filepath) -> bool:
         """
         Determines if the given GeoTIFF is a BigTIFF file or not.
 
@@ -145,33 +146,33 @@ class GeoTiffFile:
         return version == 43
 
     @property
-    def scale_factors(self):
-        """ list of str : Scale factors of the different bands. """
+    def scale_factors(self) -> List[float]:
+        """ Scale factors of the different bands. """
         return list(self._scale_factors.values())
 
     @property
-    def offsets(self):
-        """ list of numbers : Offsets of the different bands. """
+    def offsets(self) -> List[float]:
+        """ Offsets of the different bands. """
         return list(self._offsets.values())
 
     @property
-    def nodatavals(self):
-        """ list of numbers : No data values of the different bands. """
+    def nodatavals(self) -> List[int]:
+        """ No data values of the different bands. """
         return list(self._nodatavals.values())
 
     @property
-    def color_interps(self):
-        """ list of numbers : Color interpretation values of the different bands. """
+    def color_interps(self) -> List[int]:
+        """ Color interpretation values of the different bands. """
         return list(self._color_intprs.values())
 
     @property
-    def color_tables(self):
-        """ list : Color tables of the different bands. """
+    def color_tables(self) -> List[gdal.ColorTable]:
+        """ Color tables of the different bands. """
         return list(self._color_tbls.values())
 
     @property
-    def dtypes(self):
-        """ list of str : Data types in NumPy-style format. """
+    def dtypes(self) -> List[str]:
+        """ Data types in NumPy-style format. """
         return [GDAL_TO_NUMPY_DTYPE[dtype] for dtype in self._dtypes.values()]
 
     def _open(self):
@@ -250,7 +251,7 @@ class GeoTiffFile:
             err_msg = f"Open failed: {self.filepath}"
             raise IOError(err_msg)
 
-    def read(self, row=0, col=0, n_rows=None, n_cols=None, bands=None, decoder=None, decoder_kwargs=None):
+    def read(self, row=0, col=0, n_rows=None, n_cols=None, bands=None, decoder=None, decoder_kwargs=None) -> dict:
         """
         Read data from a GeoTIFF file.
 
@@ -361,7 +362,7 @@ class GeoTiffFile:
             else:
                 self.src.GetRasterBand(band).WriteArray(data_write[band], xoff=col, yoff=row)
 
-    def __to_dict(self, arg):
+    def __to_dict(self, arg) -> dict:
         """
         Assigns non-iterable object to a dictionary with band numbers as keys. If `arg` is already a dictionary the
         same object is returned.

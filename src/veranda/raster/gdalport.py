@@ -75,6 +75,75 @@ def rtype_str2gdal(resampling_method):
     return GDAL_RESAMPLE_TYPE.get(resampling_method.lower())
 
 
+def try_get_gdal_installation_path(gdal_path=None):
+    """
+    Tries to find the system path to the GDAL utilities if not already provided.
+
+    Parameters
+    ----------
+    gdal_path : str, optional
+        The path where your GDAL utilities are installed. By default, this function tries to look up this path in the
+        environment variable "GDAL_UTIL_HOME". If this variable is not set, then `gdal_path` must be provided as a
+        key-word argument.
+
+    Returns
+    -------
+    gdal_path : str
+        Path to installed GDAL utilities.
+
+    """
+    if not gdal_path:
+        gdal_path = _find_gdal_path()
+    if not gdal_path:
+        err_msg = "GDAL utility not found in system environment!"
+        raise OSError(err_msg)
+
+    return gdal_path
+
+
+def add_options_to_cli_command_list(options):
+    """
+    Prepares command line arguments for a GDAL utility.
+
+    Parameters
+    ----------
+    options : dict, optional
+        A dictionary storing additional settings for the process. You can find all options at
+        http://www.gdal.org/gdal_utilities.html
+
+    Returns
+    -------
+    cmd_options : list of str
+        Command line options for a GDAL utility given as a list of strings.
+
+    """
+    # define specific options, which need to be quoted
+    _opt_2b_in_quote = ["-mo", "-co"]
+
+    cmd_options = []
+    for k, v in options.items():
+        is_iterable = isinstance(v, (tuple, list))
+        if k in _opt_2b_in_quote:
+            if (k == "-mo" or k == "-co") and is_iterable:
+                for i in range(len(v)):
+                    cmd_options.append(" ".join((k, string2cli_arg(v[i]))))
+            else:
+                cmd_options.append(" ".join((k, string2cli_arg(v))))
+        else:
+            cmd_options.append(k)
+            if is_iterable:
+                cmd_options.append(' '.join(map(str, v)))
+            else:
+                cmd_options.append(str(v))
+
+    return cmd_options
+
+
+def string2cli_arg(string):
+    """ Decorates the given string with double quotes. """
+    return f'"{string}"'
+
+
 def call_gdal_util(util_name, src_files, dst_file=None, options=None, gdal_path=None):
     """
     Call a GDAL utility to run a GDAL operation (see http://www.gdal.org/gdal_utilities.html).
@@ -108,45 +177,22 @@ def call_gdal_util(util_name, src_files, dst_file=None, options=None, gdal_path=
     """
     options = options or dict()
 
-    # define specific options
-    _opt_2b_in_quote = ["-mo", "-co"]
-
-    # get the gdal installed path if it is set in system environmental variable
-    if not gdal_path:
-        gdal_path = _find_gdal_path()
-    if not gdal_path:
-        err_msg = "GDAL utility not found in system environment!"
-        raise OSError(err_msg)
+    gdal_path = try_get_gdal_installation_path(gdal_path)
 
     # prepare the command string
     cmd = []
     gdal_cmd = os.path.join(gdal_path, util_name) if gdal_path else util_name
-    # put gdal_cmd in double quotation
-    cmd.append('"%s"' % gdal_cmd)
-
-    for k, v in options.items():
-        is_iterable = isinstance(v, (tuple, list))
-        if k in _opt_2b_in_quote:
-            if (k == "-mo" or k == "-co") and is_iterable:
-                for i in range(len(v)):
-                    cmd.append(" ".join((k, '"%s"' % v[i])))
-            else:
-                cmd.append(" ".join((k, '"%s"' % v)))
-        else:
-            cmd.append(k)
-            if is_iterable:
-                cmd.append(' '.join(map(str, v)))
-            else:
-                cmd.append(str(v))
+    cmd.append(string2cli_arg(gdal_cmd))
+    cmd.extend(add_options_to_cli_command_list(options))
 
     # add source files and destination file (in double quotation)
     if isinstance(src_files, (tuple, list)):
         src_files_str = " ".join(src_files)
     else:
-        src_files_str = '"%s"' % src_files
+        src_files_str = string2cli_arg(src_files)
     cmd.append(src_files_str)
     if dst_file is not None:
-        cmd.append('"%s"' % dst_file)
+        cmd.append(string2cli_arg(dst_file))
 
     output = subprocess.check_output(" ".join(cmd), shell=True, cwd=gdal_path)
     successful = _analyse_gdal_output(str(output))
@@ -194,6 +240,46 @@ def _analyse_gdal_output(output):
         return False
 
 
+def _add_scale_option(options, stretch=None, src_nodata=None):
+    """
+    Adds scale (and no data value) settings to dictionary containing command line options for gdal_translate.
+
+    Parameters
+    ----------
+    options : dict
+        Dictionary with gdal_translate command line options.
+    src_nodata: int, optional
+        No data value of the input image. Defaults to None. If it is not None, then it will be transformed to 0 if it
+        is smaller than minimum value range or to 255 if it is larger than the maximum value range.
+    stretch : 2-tuple of number, optional
+        Minimum and maximum input pixel value to consider for scaling pixels to 0-255. If omitted (default), pixel
+        values will be scaled to the minimum and maximum value.
+
+    Returns
+    -------
+    options : dict
+        Dictionary with gdal_translate command line options.
+
+    """
+    stretch = stretch or (None, None)
+    min_stretch, max_stretch = stretch
+
+    options["-scale"] = ' '
+    if (min_stretch is not None) and (max_stretch is not None):
+        options['-scale'] = (min_stretch, max_stretch, 0, 255)
+        # stretching should be done differently if nodata value exist.
+        # depending on nodatavalue, first or last position is reserved for nodata value
+        if src_nodata is not None:
+            if src_nodata < min_stretch:
+                options['-scale'] = (min_stretch, max_stretch, 1, 255)
+                options['-a_nodata'] = 0
+            elif src_nodata > max_stretch:
+                options['-scale'] = (min_stretch, max_stretch, 0, 254)
+                options['-a_nodata'] = 255
+
+    return options
+
+
 def gen_qlook(src_file, dst_file=None, src_nodata=None, stretch=None, resize_factor=('3%', '3%'),
               ct=None, scale=True, output_format="GTiff", gdal_path=None):
     """
@@ -235,18 +321,11 @@ def gen_qlook(src_file, dst_file=None, src_nodata=None, stretch=None, resize_fac
         Console output.
 
     """
-    stretch = stretch or (None, None)
-    min_stretch, max_stretch = stretch
-
     output_format = output_format.lower()
     f_ext = {'gtiff': 'tif',
              'jpeg': 'jpeg'}
 
-    # get the gdal installed path if it is set in system environmental variable
-    if not gdal_path:
-        gdal_path = _find_gdal_path()
-    if not gdal_path:
-        raise OSError("gdal utility not found in system environment!")
+    gdal_path = try_get_gdal_installation_path(gdal_path)
 
     # check if destination file name is given. if not use the source directory
     if dst_file is None:
@@ -262,20 +341,8 @@ def gen_qlook(src_file, dst_file=None, src_nodata=None, stretch=None, resize_fac
                               '-mo': ['parent_data_file="%s"' % os.path.basename(src_file)], '-outsize': resize_factor}}
 
     options = options_dict[output_format]
-
     if scale:
-        options["-scale"] = ' '
-    if scale and (min_stretch is not None) and (max_stretch is not None):
-        options['-scale'] = (min_stretch, max_stretch, 0, 255)
-        # stretching should be done differently if nodata value exist.
-        # depending on nodatavalue, first or last position is reserved for nodata value
-        if src_nodata is not None:
-            if src_nodata < min_stretch:
-                options['-scale'] = (min_stretch, max_stretch, 1, 255)
-                options['-a_nodata'] = 0
-            elif src_nodata > max_stretch:
-                options['-scale'] = (min_stretch, max_stretch, 0, 254)
-                options['-a_nodata'] = 255
+        options = _add_scale_option(options, stretch=stretch, src_nodata=src_nodata)
 
     # call gdal_translate to resize input file
     successful, output = call_gdal_util('gdal_translate', src_files=src_file,

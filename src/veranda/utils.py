@@ -1,5 +1,5 @@
 
-def to_list(arg):
+def to_list(arg) -> list:
     """
     Converts non-iterable object to a list. If `arg` is already a list or tuple the same object is returned.
 

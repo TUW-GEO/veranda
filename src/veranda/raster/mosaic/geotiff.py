@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from osgeo import gdal
 from datetime import datetime
+from typing import Tuple, List
 from multiprocessing import Pool, RawArray
 
 from geospade.crs import SpatialRef
@@ -61,16 +62,16 @@ class GeoTiffAccess(RasterAccess):
         self.src_shape = src_raster_geom.parent_root.shape
 
     @property
-    def gdal_args(self):
+    def gdal_args(self) -> Tuple[int, int, int, int]:
         """ 4-tuple : Prepares the needed positional arguments for GDAL's `ReadAsArray()` function. """
         min_row, min_col, max_row, max_col = self.src_window
         n_cols, n_rows = max_col - min_col + 1, max_row - min_row + 1
         return min_col, min_row, n_cols, n_rows
 
     @property
-    def read_args(self):
+    def read_args(self) -> Tuple[int, int, int, int]:
         """
-        4-tuple : Prepares the needed positional arguments for the `read()` function of the internal GeoTIFF native.
+        Prepares the needed positional arguments for the `read()` function of the internal GeoTIFF native.
         """
         min_col, min_row, n_cols, n_rows = self.gdal_args
         return min_row, min_col, n_rows, n_cols
@@ -117,9 +118,9 @@ class GeoTiffReader(RasterDataReader):
 
     @classmethod
     def from_filepaths(cls, filepaths, mosaic_class=MosaicGeometry, mosaic_kwargs=None, tile_kwargs=None,
-                       stack_dimension='layer_id', **kwargs):
+                       stack_dimension='layer_id', **kwargs) -> "GeoTiffReader":
         """
-        Creates a `GeoTiffDataReader` instance as one stack of GeoTIFF files.
+        Creates a `GeoTiffReader` instance as one stack of GeoTIFF files.
 
         Parameters
         ----------
@@ -167,7 +168,7 @@ class GeoTiffReader(RasterDataReader):
 
     @classmethod
     def from_mosaic_filepaths(cls, filepaths, mosaic_class=MosaicGeometry, mosaic_kwargs=None,
-                              stack_dimension='layer_id', **kwargs):
+                              stack_dimension='layer_id', **kwargs) -> "GeoTiffReader":
         """
         Creates a `GeoTiffDataReader` instance as multiple stacks of GeoTIFF files.
 
@@ -229,7 +230,7 @@ class GeoTiffReader(RasterDataReader):
         return cls(file_register, mosaic_geom, stack_dimension=stack_dimension, **kwargs)
 
     def read(self, bands=1, band_names=None, engine='vrt', n_cores=1,
-             auto_decode=False, decoder=None, decoder_kwargs=None):
+             auto_decode=False, decoder=None, decoder_kwargs=None) -> "GeoTiffReader":
         """
         Reads data from disk.
 
@@ -364,7 +365,7 @@ class GeoTiffReader(RasterDataReader):
                                                             self._file_dim)) as p:
             p.map(read_single_files, global_file_register.index)
 
-    def _to_xarray(self, data, band_names=None):
+    def _to_xarray(self, data, band_names=None) -> xr.Dataset:
         """
         Converts data being available as a NumPy array to an xarray dataset.
 
