@@ -24,7 +24,7 @@ from veranda.raster.mosaic.base import RasterDataReader, RasterDataWriter, Raste
 PROC_OBJS = {}
 
 
-def read_init(fr, am, sm, ad, dc, dk, fd):
+def read_init(fr, am, sm, ad, dc, dk):
     """ Helper method for setting the entries of global variable `PROC_OBJS` to be available during multiprocessing. """
     PROC_OBJS['global_file_register'] = fr
     PROC_OBJS['access_map'] = am
@@ -32,7 +32,6 @@ def read_init(fr, am, sm, ad, dc, dk, fd):
     PROC_OBJS['auto_decode'] = ad
     PROC_OBJS['decoder'] = dc
     PROC_OBJS['decoder_kwargs'] = dk
-    PROC_OBJS['stack_dimension'] = fd
 
 
 class GeoTiffAccess(RasterAccess):
@@ -63,16 +62,14 @@ class GeoTiffAccess(RasterAccess):
 
     @property
     def gdal_args(self) -> Tuple[int, int, int, int]:
-        """ 4-tuple : Prepares the needed positional arguments for GDAL's `ReadAsArray()` function. """
+        """ Prepares the needed positional arguments for GDAL's `ReadAsArray()` function. """
         min_row, min_col, max_row, max_col = self.src_window
         n_cols, n_rows = max_col - min_col + 1, max_row - min_row + 1
         return min_col, min_row, n_cols, n_rows
 
     @property
     def read_args(self) -> Tuple[int, int, int, int]:
-        """
-        Prepares the needed positional arguments for the `read()` function of the internal GeoTIFF native.
-        """
+        """ Prepares the needed positional arguments for the `read()` function of the internal GeoTIFF native. """
         min_col, min_row, n_cols, n_rows = self.gdal_args
         return min_row, min_col, n_rows, n_cols
 
@@ -158,7 +155,7 @@ class GeoTiffReader(RasterDataReader):
         with GeoTiffFile(ref_filepath, 'r') as gt_file:
             sref_wkt = gt_file.sref_wkt
             geotrans = gt_file.geotrans
-            n_rows, n_cols = gt_file.shape
+            n_rows, n_cols = gt_file.raster_shape
 
         tile_class = mosaic_class.get_tile_class()
         tile = tile_class(n_rows, n_cols, sref=SpatialRef(sref_wkt), geotrans=geotrans, name='0', **tile_kwargs)
@@ -195,31 +192,9 @@ class GeoTiffReader(RasterDataReader):
         mosaic_kwargs = mosaic_kwargs or dict()
         file_register_dict = dict()
         file_register_dict['filepath'] = filepaths
-
-        tile_ids = []
-        layer_ids = []
-        tiles = []
-        tile_idx = 0
         tile_class = mosaic_class.get_tile_class()
-        for filepath in filepaths:
-            with GeoTiffFile(filepath, 'r') as gt_file:
-                sref_wkt = gt_file.sref_wkt
-                geotrans = gt_file.geotrans
-                n_rows, n_cols = gt_file.shape
-            curr_tile = tile_class(n_rows, n_cols, sref=SpatialRef(sref_wkt), geotrans=geotrans, name=str(tile_idx))
-            curr_tile_idx = None
-            for tile in tiles:
-                if curr_tile == tile:
-                    curr_tile_idx = tile.name
-                    break
-            if curr_tile_idx is None:
-                tiles.append(curr_tile)
-                curr_tile_idx = tile_idx
-                tile_idx += 1
-
-            tile_ids.append(curr_tile_idx)
-            layer_id = sum(np.array(tile_ids) == curr_tile_idx) + 1
-            layer_ids.append(layer_id)
+        tiles, tile_ids, layer_ids = RasterDataReader._create_tile_and_layer_info_from_files(filepaths, tile_class,
+                                                                                             GeoTiffFile)
 
         file_register_dict['tile_id'] = tile_ids
         file_register_dict[stack_dimension] = layer_ids
@@ -264,24 +239,10 @@ class GeoTiffReader(RasterDataReader):
                                     x_pixel_size=self._mosaic.x_pixel_size,
                                     y_pixel_size=self._mosaic.y_pixel_size,
                                     name='0')
-        shm_map = dict()
-        for band in bands:
-            np_dtype = np.dtype(self._ref_dtypes[band - 1])
-            self._ref_nodatavals[band - 1] = np.array((self._ref_nodatavals[band - 1])).astype(np_dtype)
-            data_nshm = np.ones((self.n_layers, new_tile.n_rows, new_tile.n_cols), dtype=np_dtype) * self._ref_nodatavals[band - 1]
-            shm_ar_shape = data_nshm.shape
-            c_dtype = np.ctypeslib.as_ctypes_type(data_nshm.dtype)
-            shm_rar = RawArray(c_dtype, data_nshm.size)
-            shm_data = np.frombuffer(shm_rar, dtype=np_dtype).reshape(shm_ar_shape)
-            shm_data[:] = data_nshm[:]
-            shm_map[band] = (shm_rar, shm_ar_shape)
 
-        access_map = dict()
-        data_mask = np.ones(new_tile.shape)
-        for tile in self._mosaic.tiles:
-            gt_access = GeoTiffAccess(tile, new_tile)
-            data_mask[gt_access.dst_row_slice, gt_access.dst_col_slice] = tile.mask
-            access_map[tile.name] = gt_access
+        shm_map = {band: self.__init_band_data(band, new_tile) for band in bands}
+        access_map = {tile.name: GeoTiffAccess(tile, new_tile) for tile in self._mosaic.tiles}
+        data_mask = self.__create_data_mask_from(access_map, new_tile.shape)
 
         if engine == 'vrt':
             self.__read_vrt_stack(access_map, shm_map, n_cores=n_cores, auto_decode=auto_decode, decoder=decoder,
@@ -293,17 +254,92 @@ class GeoTiffReader(RasterDataReader):
             err_msg = f"Engine '{engine}' is not supported!"
             raise ValueError(err_msg)
 
-        data = dict()
-        for band in shm_map.keys():
-            shm_rar, shm_ar_shape = shm_map[band]
-            shm_data = np.frombuffer(shm_rar, dtype=self._ref_dtypes[band - 1]).reshape(shm_ar_shape)
-            shm_data[:, ~data_mask.astype(bool)] = self._ref_nodatavals[band - 1]
-            data[band] = shm_data
+        data = {band: self.__load_band_data(band, shm_map, data_mask) for band in bands}
 
         self._data_geom = new_tile
         self._data = self._to_xarray(data, band_names)
         self._add_grid_mapping()
         return self
+
+    def __init_band_data(self, band, tile) -> Tuple[RawArray, tuple]:
+        """
+        Initialises shared memory array for a specific band.
+
+        Parameters
+        ----------
+        band : int
+            Band number.
+        tile : Tile
+            Tile containing information about the raster shape of the band data.
+
+        Returns
+        -------
+        shm_ar : RawArray
+            Shared memory array.
+        shm_ar_shape : tuple
+            Shape of the array.
+
+        """
+        np_dtype = np.dtype(self._ref_dtypes[band - 1])
+        self._ref_nodatavals[band - 1] = np.array((self._ref_nodatavals[band - 1])).astype(np_dtype)
+        data_nshm = np.ones((self.n_layers, tile.n_rows, tile.n_cols), dtype=np_dtype) * \
+                    self._ref_nodatavals[band - 1]
+        shm_ar_shape = data_nshm.shape
+        c_dtype = np.ctypeslib.as_ctypes_type(data_nshm.dtype)
+        shm_rar = RawArray(c_dtype, data_nshm.size)
+        shm_data = np.frombuffer(shm_rar, dtype=np_dtype).reshape(shm_ar_shape)
+        shm_data[:] = data_nshm[:]
+
+        return shm_rar, shm_ar_shape
+
+    def __load_band_data(self, band, shm_map, mask) -> np.ndarray:
+        """
+        Loads band data from the corresponding shared memory array.
+
+        Parameters
+        ----------
+        band : int
+            Band number.
+        shm_map : dict
+            Dictionary mapping the band number with a tuple containing a shared memory array and its shape.
+        mask : np.array
+            Data mask.
+
+        Returns
+        -------
+        shm_ar : RawArray
+            Shared memory array.
+
+        """
+        shm_rar, shm_ar_shape = shm_map[band]
+        shm_data = np.frombuffer(shm_rar, dtype=self._ref_dtypes[band - 1]).reshape(shm_ar_shape)
+        shm_data[:, ~mask.astype(bool)] = self._ref_nodatavals[band - 1]
+
+        return shm_data
+
+    def __create_data_mask_from(self, access_map, shape) -> np.ndarray:
+        """
+        Creates data mask from all individual tile masks contributing to the spatial extent of the data.
+
+        Parameters
+        ----------
+        access_map : dict
+            Dictionary mapping tile names with `GeoTiffAccess` instances for storing the access relation between
+            the data mask and the tiles.
+        shape : tuple
+            Shape of the data mask.
+
+        Returns
+        -------
+        data_mask : np.ndarray
+            Data mask (1 valid data, 0 no data).
+
+        """
+        data_mask = np.ones(shape)
+        for tile in self._mosaic.tiles:
+            gt_access = access_map[tile.name]
+            data_mask[gt_access.dst_row_slice, gt_access.dst_col_slice] = tile.mask
+        return data_mask
 
     def __read_vrt_stack(self, access_map, shm_map, n_cores=1,
                          auto_decode=False, decoder=None, decoder_kwargs=None):
@@ -331,8 +367,7 @@ class GeoTiffReader(RasterDataReader):
         global_file_register = self._file_register
 
         with Pool(n_cores, initializer=read_init, initargs=(global_file_register, access_map, shm_map,
-                                                            auto_decode, decoder, decoder_kwargs,
-                                                            self._file_dim)) as p:
+                                                            auto_decode, decoder, decoder_kwargs)) as p:
             p.map(read_vrt_stack, access_map.keys())
 
     def __read_parallel(self, access_map, shm_map, n_cores=1,
@@ -361,8 +396,7 @@ class GeoTiffReader(RasterDataReader):
         global_file_register = self._file_register
 
         with Pool(n_cores, initializer=read_init, initargs=(global_file_register, access_map, shm_map,
-                                                            auto_decode, decoder, decoder_kwargs,
-                                                            self._file_dim)) as p:
+                                                            auto_decode, decoder, decoder_kwargs)) as p:
             p.map(read_single_files, global_file_register.index)
 
     def _to_xarray(self, data, band_names=None) -> xr.Dataset:
@@ -450,7 +484,7 @@ class GeoTiffWriter(RasterDataWriter):
         super().__init__(mosaic, file_register=file_register, data=data, stack_dimension=stack_dimension,
                          stack_coords=stack_coords, dirpath=dirpath, fn_pattern=fn_pattern, fn_formatter=fn_formatter)
 
-    def write(self, data, encoder=None, encoder_kwargs=None, overwrite=False, **kwargs):
+    def write(self, data, apply_tiling=False, encoder=None, encoder_kwargs=None, overwrite=False, **kwargs):
         """
         Writes a certain chunk of data to disk.
 
@@ -458,6 +492,9 @@ class GeoTiffWriter(RasterDataWriter):
         ----------
         data : xr.Dataset
             Data chunk to be written to disk or being appended to existing data.
+        apply_tiling : bool, optional
+            True if data should be tiled according to the mosaic.
+            False if data composes a new tile and should not be tiled (default).
         encoder : callable, optional
             Function allowing to encode data before writing it to disk.
         encoder_kwargs : dict, optional
@@ -470,41 +507,41 @@ class GeoTiffWriter(RasterDataWriter):
 
         band_names = list(data.data_vars)
         n_bands = len(band_names)
-        nodatavals = dict()
-        scale_factors = dict()
-        offsets = dict()
-        dtypes = dict()
-        for i, band_name in enumerate(band_names):
-            dtypes[i + 1] = self._data[band_name].data.dtype.name
-            nodatavals[i + 1] = self._data[band_name].attrs.get('_FillValue', 0)
-            scale_factors[i + 1] = self._data[band_name].attrs.get('scale_factor', 1)
-            offsets[i + 1] = self._data[band_name].attrs.get('add_offset', 0)
+        nodatavals, scale_factors, offsets, dtypes = self.__get_encoding_info_from_data(band_names)
 
         for filepath, file_group in self._file_register.groupby('filepath'):
             tile_id = file_group.iloc[0].get('tile_id', '0')
+
             file_coords = list(file_group[self._file_dim])
-            tile = self._mosaic[tile_id]
-            if not tile.intersects(data_geom):
-                continue
+            xrds = data.sel(**{self._file_dim: file_coords})
+            data_write = xrds[band_names].to_array().data
+
+            if apply_tiling:
+                tile = self._mosaic[tile_id]
+                if not tile.intersects(data_geom):
+                    continue
+                tile_write = data_geom.slice_by_geom(tile, inplace=False, name='0')
+                gt_access = GeoTiffAccess(tile_write, tile, src_root_raster_geom=data_geom)
+                data_write = data_write[..., gt_access.src_row_slice, gt_access.src_col_slice]
+            else:
+                tile = data_geom
+                tile_write = data_geom
+                gt_access = GeoTiffAccess(tile_write, tile, src_root_raster_geom=data_geom)
+
             file_id = file_group.iloc[0].get('file_id', None)
             if file_id is None:
                 gt_file = GeoTiffFile(filepath, mode='w', geotrans=tile.geotrans, sref_wkt=tile.sref.wkt,
-                                        shape=tile.shape, n_bands=n_bands, dtypes=dtypes, scale_factors=scale_factors,
-                                        offsets=offsets, nodatavals=nodatavals)
+                                      raster_shape=tile.shape, n_bands=n_bands, dtypes=dtypes,
+                                      scale_factors=scale_factors, offsets=offsets, nodatavals=nodatavals)
                 file_id = len(list(self._files.keys())) + 1
                 self._files[file_id] = gt_file
                 self._file_register.loc[file_group.index, 'file_id'] = file_id
 
             gt_file = self._files[file_id]
-            tile_write = data_geom.slice_by_geom(tile, inplace=False, name='0')
-            gt_access = GeoTiffAccess(tile_write, tile, src_root_raster_geom=data_geom)
-            xrds = data.sel(**{self._file_dim: file_coords})
-            data_write = xrds[band_names].to_array().data
-            gt_file.write(data_write[...,
-                                     gt_access.src_row_slice,
+            gt_file.write(data_write[..., gt_access.src_row_slice,
                                      gt_access.src_col_slice].reshape((-1, tile_write.n_rows, tile_write.n_cols)),
-                            row=gt_access.dst_window[0], col=gt_access.dst_window[1],
-                            encoder=encoder, encoder_kwargs=encoder_kwargs)
+                          row=gt_access.dst_window[0], col=gt_access.dst_window[1],
+                          encoder=encoder, encoder_kwargs=encoder_kwargs)
 
     def export(self, apply_tiling=False, encoder=None, encoder_kwargs=None, overwrite=False, **kwargs):
         """
@@ -523,7 +560,30 @@ class GeoTiffWriter(RasterDataWriter):
             True if data should be overwritten, False if not (default).
 
         """
-        band_names = list(self._data.data_vars)
+
+        self.write(self._data, apply_tiling, encoder, encoder_kwargs, overwrite, **kwargs)
+
+    def __get_encoding_info_from_data(self, band_names) -> Tuple[dict, dict, dict, dict]:
+        """
+        Extracts encoding information from internal data.
+
+        Parameters
+        ----------
+        band_names : list of str
+            List of band names.
+
+        Returns
+        -------
+        nodatavals : dict
+            Band number mapped to no data value (defaults to 0).
+        scale_factors : dict
+            Band number mapped to scale factor (defaults to 1).
+        offsets : dict
+            Band number mapped to offset (defaults to 0).
+        dtypes : dict
+            Band number mapped to data type.
+
+        """
         nodatavals = dict()
         scale_factors = dict()
         offsets = dict()
@@ -534,28 +594,7 @@ class GeoTiffWriter(RasterDataWriter):
             scale_factors[i + 1] = self._data[band_name].attrs.get('scale_factor', 1)
             offsets[i + 1] = self._data[band_name].attrs.get('add_offset', 0)
 
-        bands = range(1, len(band_names) + 1)
-        n_bands = len(bands)
-        for filepath, file_group in self._file_register.groupby('filepath'):
-            tile_id = file_group.iloc[0].get('tile_id', '0')
-            file_coords = list(file_group[self._file_dim])
-            xrds = self.data.sel(**{self._file_dim: file_coords})
-            data_write = xrds[band_names].to_array().data
-            if apply_tiling:
-                tile = self._mosaic[tile_id]
-                if not tile.intersects(self._data_geom):
-                    continue
-                tile_write = self._data_geom.slice_by_geom(tile, inplace=False, name='0')
-                gt_access = GeoTiffAccess(tile_write, tile, src_root_raster_geom=self._data_geom)
-                data_write = data_write[..., gt_access.src_row_slice, gt_access.src_col_slice]
-            else:
-                tile_write = self._data_geom
-
-            with GeoTiffFile(filepath, mode='w', geotrans=tile_write.geotrans, sref_wkt=tile_write.sref.wkt,
-                             shape=tile_write.shape, n_bands=n_bands, dtypes=dtypes, scale_factors=scale_factors,
-                             offsets=offsets, nodatavals=nodatavals) as gt_file:
-                gt_file.write(data_write.reshape((-1, tile_write.n_rows, tile_write.n_cols)),
-                              encoder=encoder, encoder_kwargs=encoder_kwargs)
+        return nodatavals, scale_factors, offsets, dtypes
 
 
 def read_vrt_stack(tile_id):
@@ -572,16 +611,10 @@ def read_vrt_stack(tile_id):
     global_file_register = PROC_OBJS['global_file_register']
     access_map = PROC_OBJS['access_map']
     shm_map = PROC_OBJS['shm_map']
-    auto_decode = PROC_OBJS['auto_decode']
-    decoder = PROC_OBJS['decoder']
-    decoder_kwargs = PROC_OBJS['decoder_kwargs']
-    stack_dimension = PROC_OBJS['stack_dimension']
 
     gt_access = access_map[tile_id]
     bands = list(shm_map.keys())
-    n_bands = len(bands)
     file_register = global_file_register.loc[global_file_register['tile_id'] == tile_id]
-    layer_ids = file_register[stack_dimension]
 
     path = tempfile.gettempdir()
     date_str = datetime.utcnow().strftime("%Y%m%d%H%M%S")
@@ -594,26 +627,54 @@ def read_vrt_stack(tile_id):
 
     src = gdal.Open(vrt_filepath, gdal.GA_ReadOnly)
     vrt_data = src.ReadAsArray(*gt_access.gdal_args)
-    stack_idxs = np.arange(len(layer_ids))#np.array(layer_ids) - 1
     for band in bands:
-        band_data = vrt_data[(band - 1)::n_bands, ...]
-        scale_factor = src.GetRasterBand(band).GetScale()
-        nodataval = src.GetRasterBand(band).GetNoDataValue()
-        offset = src.GetRasterBand(band).GetOffset()
-        dtype = GDAL_TO_NUMPY_DTYPE[src.GetRasterBand(band).DataType]
-        if auto_decode:
-            band_data = band_data.astype(float)
-            band_data[band_data == nodataval] = np.nan
-            band_data = band_data * scale_factor + offset
-        else:
-            if decoder is not None:
-                band_data = decoder(band_data, nodataval=nodataval, band=band, scale_factor=scale_factor,
-                                    offset=offset,
-                                    dtype=dtype, **decoder_kwargs)
+        _assign_vrt_stack_per_band(tile_id, band, src, vrt_data)
 
-        shm_rar, shm_ar_shape = shm_map[band]
-        shm_data = np.frombuffer(shm_rar, dtype=dtype).reshape(shm_ar_shape)
-        shm_data[stack_idxs, gt_access.dst_row_slice, gt_access.dst_col_slice] = band_data
+
+def _assign_vrt_stack_per_band(tile_id, band, src, vrt_data):
+    """
+    Assigns loaded raster data to shared memory array for a specific band.
+
+    Parameters
+    ----------
+    tile_id : str
+        Tile/geometry ID coming from the Pool's mapping function.
+    band : int
+        Band number.
+    src : gdal.Dataset
+        GDAL dataset handle.
+    vrt_data : np.ndarray
+        In-memory data read from disk.
+
+    """
+    auto_decode = PROC_OBJS['auto_decode']
+    decoder = PROC_OBJS['decoder']
+    decoder_kwargs = PROC_OBJS['decoder_kwargs']
+    access_map = PROC_OBJS['access_map']
+    shm_map = PROC_OBJS['shm_map']
+
+    gt_access = access_map[tile_id]
+    bands = list(shm_map.keys())
+    n_bands = len(bands)
+
+    band_data = vrt_data[(band - 1)::n_bands, ...]
+    scale_factor = src.GetRasterBand(band).GetScale()
+    nodataval = src.GetRasterBand(band).GetNoDataValue()
+    offset = src.GetRasterBand(band).GetOffset()
+    dtype = GDAL_TO_NUMPY_DTYPE[src.GetRasterBand(band).DataType]
+    if auto_decode:
+        band_data = band_data.astype(float)
+        band_data[band_data == nodataval] = np.nan
+        band_data = band_data * scale_factor + offset
+    else:
+        if decoder is not None:
+            band_data = decoder(band_data, nodataval=nodataval, band=band, scale_factor=scale_factor,
+                                offset=offset,
+                                dtype=dtype, **decoder_kwargs)
+
+    shm_rar, shm_ar_shape = shm_map[band]
+    shm_data = np.frombuffer(shm_rar, dtype=dtype).reshape(shm_ar_shape)
+    shm_data[:, gt_access.dst_row_slice, gt_access.dst_col_slice] = band_data
 
 
 def read_single_files(file_idx):

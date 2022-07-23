@@ -9,9 +9,7 @@ from osgeo import ogr, osr
 class GdalTest(unittest.TestCase):
 
     def setUp(self):
-        """
-        Set up dummy mosaic set.
-        """
+
         self.wkt = ('PROJCS["Azimuthal_Equidistant",GEOGCS["WGS 84",'
                     'DATUM["WGS_1984",SPHEROID["WGS 84",6378137,'
                     '298.257223563,AUTHORITY["EPSG","7030"]],'
@@ -26,9 +24,7 @@ class GdalTest(unittest.TestCase):
                     'UNIT["metre",1,AUTHORITY["EPSG","9001"]]]')
 
     def test_biproj_point(self):
-        """
-        Test write and read.
-        """
+
         lon = 16.3695
         lat = 48.2058
 
@@ -58,12 +54,6 @@ class GdalTest(unittest.TestCase):
 
         assert point_proj.GetX() == lon
         assert point_proj.GetY() == lat
-
-    def tearDown(self):
-        """
-        Remove dummy files.
-        """
-        pass
 
 
 if __name__ == '__main__':

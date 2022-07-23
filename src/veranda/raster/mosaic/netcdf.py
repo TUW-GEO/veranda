@@ -136,31 +136,9 @@ class NetCdfReader(RasterDataReader):
         mosaic_kwargs = mosaic_kwargs or dict()
         file_register_dict = dict()
         file_register_dict['filepath'] = filepaths
-
-        tile_ids = []
-        layer_ids = []
-        tiles = []
-        tile_idx = 0
         tile_class = mosaic_class.get_tile_class()
-        for filepath in filepaths:
-            with NetCdf4File(filepath, 'r') as nc_file:
-                sref_wkt = nc_file.sref_wkt
-                geotrans = nc_file.geotrans
-                n_rows, n_cols = nc_file.raster_shape
-            curr_tile = tile_class(n_rows, n_cols, sref=SpatialRef(sref_wkt), geotrans=geotrans, name=str(tile_idx))
-            curr_tile_idx = None
-            for tile in tiles:
-                if curr_tile == tile:
-                    curr_tile_idx = tile.name
-                    break
-            if curr_tile_idx is None:
-                tiles.append(curr_tile)
-                curr_tile_idx = tile_idx
-                tile_idx += 1
-
-            tile_ids.append(curr_tile_idx)
-            layer_id = sum(np.array(tile_ids) == curr_tile_idx)
-            layer_ids.append(layer_id)
+        tiles, tile_ids, layer_ids = RasterDataReader._create_tile_and_layer_info_from_files(filepaths, tile_class,
+                                                                                             NetCdf4File)
 
         file_register_dict['tile_id'] = tile_ids
         file_register_dict[stack_dimension] = layer_ids
@@ -562,7 +540,7 @@ class NetCdfWriter(RasterDataWriter):
         """
         unlimited_dims = to_list(unlimited_dims)
         data_variables = to_list(data_variables) if data_variables is not None else list(self._data.data_vars)
-        data = self.data[data_variables]
+        data = self.data_view[data_variables]
 
         all_dims = list(data.dims)
         space_dims = all_dims[-2:]

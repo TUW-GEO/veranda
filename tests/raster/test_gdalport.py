@@ -27,9 +27,7 @@ from veranda.raster.native.geotiff import GeoTiffFile
 class GdalportTest(unittest.TestCase):
 
     def setUp(self):
-        """
-        Set up dummy mosaic set.
-        """
+
         self.data = np.ones((1, 100, 100))
         test_dir = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), 'temp')
@@ -51,9 +49,7 @@ class GdalportTest(unittest.TestCase):
         assert succeed
 
     def tearDown(self):
-        """
-        Remove dummy files.
-        """
+
         if os.path.exists(self.filename):
             os.remove(self.filename)
         if os.path.exists(self.filename_gdal_trans):

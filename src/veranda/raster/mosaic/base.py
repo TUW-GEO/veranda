@@ -10,7 +10,7 @@ import xarray as xr
 import pandas as pd
 import numpy as np
 from affine import Affine
-from typing import List
+from typing import List, Tuple, Sequence
 
 from geospade.tools import any_geom2ogr_geom
 from geospade.tools import rel_extent
@@ -18,6 +18,7 @@ from geospade.crs import SpatialRef
 from geospade.raster import RasterGeometry
 from geospade.raster import MosaicGeometry
 from geospade.raster import Tile
+from geospade.raster import find_congruent_tile_id_from_tiles
 
 
 class RasterAccess:
@@ -151,7 +152,7 @@ class RasterData(metaclass=abc.ABCMeta):
         return list(set(self._file_register['filepath']))
 
     @property
-    def data(self) -> xr.Dataset:
+    def data_view(self) -> xr.Dataset:
         """ View on internal raster data. """
         return self._view_data()
 
@@ -159,6 +160,68 @@ class RasterData(metaclass=abc.ABCMeta):
     def load(self, *args, **kwargs):
         """ An abstract method for loading data either from disk or RAM. """
         pass
+
+    @staticmethod
+    def _sdims_from_data(data) -> List[str]:
+        """
+        Collects spatial dimensions of an xr.Dataset, which are assumed to be the last two.
+
+        Parameters
+        ----------
+        data : xr.Dataset
+            Raster data.
+
+        Returns
+        -------
+        list :
+            Spatial dimensions of the given xr.Dataset.
+
+        """
+        return list(data.dims)[-2:]
+
+    @staticmethod
+    def _pixel_sizes_from_data(data) -> Tuple[float, float]:
+        """
+        Collects pixel sizes of an xr.Dataset.
+
+        Parameters
+        ----------
+        data : xr.Dataset
+            Raster data.
+
+        Returns
+        -------
+         x_pixel_size, y_pixel_size :
+            Pixel size in X and Y direction.
+
+        """
+        sdims = RasterData._sdims_from_data(data)
+        y_pixel_size = data[sdims[0]].data[0] - data[sdims[0]].data[1]
+        x_pixel_size = data[sdims[1]].data[1] - data[sdims[1]].data[0]
+
+        return x_pixel_size, y_pixel_size
+
+    @staticmethod
+    def _extent_from_data(data) -> Tuple[float, float, float, float]:
+        """
+        Computes the extent/bounding box of an xr.Dataset.
+
+        Parameters
+        ----------
+        data : xr.Dataset
+            Raster data.
+
+        Returns
+        -------
+         4-tuple :
+            Extent/bounding box of the given data (lower left x, lower left y, upper right x, upper right y).
+
+        """
+        sdims = RasterData._sdims_from_data(data)
+        x_pixel_size, y_pixel_size = RasterData._pixel_sizes_from_data(data)
+
+        return data[sdims[1]].data[0], data[sdims[0]].data[-1] - y_pixel_size, \
+               data[sdims[1]].data[-1] + x_pixel_size, data[sdims[0]].data[0]
 
     @staticmethod
     def raster_geom_from_data(data, sref=None, **kwargs) -> RasterGeometry:
@@ -186,11 +249,9 @@ class RasterData(metaclass=abc.ABCMeta):
             raise ValueError(err_msg)
         if ds_sref is not None:
             sref = SpatialRef(ds_sref.attrs.get('spatial_ref'))
-        sdims = list(data.dims)[-2:]
-        y_pixel_size = data[sdims[0]].data[0] - data[sdims[0]].data[1]
-        x_pixel_size = data[sdims[1]].data[1] - data[sdims[1]].data[0]
-        extent = [data[sdims[1]].data[0], data[sdims[0]].data[-1] - y_pixel_size,
-                  data[sdims[1]].data[-1] + x_pixel_size, data[sdims[0]].data[0]]
+
+        x_pixel_size, y_pixel_size = RasterData._pixel_sizes_from_data(data)
+        extent = RasterData._extent_from_data(data)
         raster_geom = RasterGeometry.from_extent(extent, sref,
                                                  x_pixel_size=x_pixel_size, y_pixel_size=y_pixel_size, **kwargs)
         return raster_geom
@@ -293,7 +354,7 @@ class RasterData(metaclass=abc.ABCMeta):
             return new_raster_data.select_layers(layer_ids, inplace=True)
 
         layer_ids_close = set(self._file_register[self._file_dim]) - set(layer_ids)
-        self.close(layer_ids=layer_ids_close, clear_ram=False)
+        self.close(layer_ids=layer_ids_close)
         self._file_register = self._file_register[self._file_register[self._file_dim].isin(layer_ids)]
 
         return self
@@ -493,7 +554,7 @@ class RasterData(metaclass=abc.ABCMeta):
             self._data.rio.write_crs(self._data_geom.sref.wkt, inplace=True)
             self._data.rio.write_transform(Affine(*self._data_geom.geotrans), inplace=True)
 
-    def close(self, layer_ids=None, clear_ram=True):
+    def close(self, layer_ids=None):
         """
         Closes open file handles and optionally data stored in RAM.
 
@@ -502,8 +563,6 @@ class RasterData(metaclass=abc.ABCMeta):
         layer_ids : list, optional
             Layer IDs indicating the file handles which should be closed. Defaults to None, i.e. all file handles are
             closed.
-        clear_ram : bool, optional
-            If True (default), memory allocated by the internal data object is released.
 
         """
         if layer_ids is not None:
@@ -519,9 +578,9 @@ class RasterData(metaclass=abc.ABCMeta):
             self._files[file_id].close()
             del self._files[file_id]
 
-        if clear_ram:
-            self._data = None
-            gc.collect()
+    def clear_ram(self):
+        """ Releases memory allocated by the internal data object. """
+        self._data = None
 
     def __enter__(self):
         return self
@@ -555,12 +614,9 @@ class RasterData(metaclass=abc.ABCMeta):
         return self.file_register.style.set_properties(subset=['filepath'], **{'text-align': 'right'})._repr_html_()
 
     def __repr__(self) -> str:
-        """
-        str : General string representation of a raster data instance, which is the string represenation of its
-        file register.
-
-        """
-        return str(self.file_register)
+        """ General string representation of a raster data instance. """
+        return f"{self.__class__.__name__}({self._file_dim}, {self.mosaic.__class__.__name__}):\n\n" \
+               f"{repr(self.file_register)}"
 
 
 class RasterDataReader(RasterData):
@@ -635,10 +691,57 @@ class RasterDataReader(RasterData):
 
         """
         if self._data is not None and self._data_geom is not None:
-            self._data = self.data
+            self._data = self.data_view
             self._data_geom.parent = None
         else:
             self.read(*args, **kwargs)
+
+    @staticmethod
+    def _create_tile_and_layer_info_from_files(filepaths, tile_class, file_class) -> Tuple[List[Tile], list, list]:
+        """
+        Loops over a given list of files to assign a tile and layer to each file and creates the corresponding indexes.
+
+        Parameters
+        ----------
+        filepaths : list of str
+            List of file paths.
+        tile_class : class
+            Class constructor for a tile class.
+        file_class : class
+            Class constructor for a file class.
+
+        Returns
+        -------
+        tiles : list of Tile
+            Unique set of tiles representing all input file paths.
+        tile_ids : list of str
+            List of tile ids containing one ID per file.
+        layer_ids : list of str
+            List of layer ids containing one ID per file.
+
+        """
+        tile_ids = []
+        layer_ids = []
+        tiles = []
+        tile_idx = 0
+        for filepath in filepaths:
+            with file_class(filepath, 'r') as f:
+                sref_wkt = f.sref_wkt
+                geotrans = f.geotrans
+                n_rows, n_cols = f.raster_shape
+            curr_tile = tile_class(n_rows, n_cols, sref=SpatialRef(sref_wkt), geotrans=geotrans, name=str(tile_idx))
+            curr_tile_id = find_congruent_tile_id_from_tiles(curr_tile, tiles)
+            if curr_tile_id is None:
+                tiles.append(curr_tile)
+                curr_tile_id = str(tile_idx)
+                tile_idx += 1
+
+            tile_ids.append(curr_tile_id)
+            # define the layer ID as the next index of all filepaths, which have already been assigned to one tile
+            layer_id = sum(np.array(tile_ids) == curr_tile_id) + 1
+            layer_ids.append(layer_id)
+
+        return tiles, tile_ids, layer_ids
 
 
 class RasterDataWriter(RasterData):
@@ -691,45 +794,17 @@ class RasterDataWriter(RasterData):
             err_msg = "Either a file register ('file_register') or an xarray dataset ('data') has to be provided."
             raise ValueError(err_msg)
         elif file_register is None and data is not None:
-            layers = data[stack_dimension]
-            file_register_dict = dict()
-            file_register_dict[stack_dimension] = layers
-            file_register = pd.DataFrame(file_register_dict)
+            file_register = RasterDataWriter._file_register_from_data(data, stack_dimension)
 
         if 'tile_id' not in file_register.columns:
-            n_entries = len(file_register)
-            tile_names = mosaic.all_tile_names
-            n_tiles = len(tile_names)
-            file_register = pd.DataFrame(np.repeat(file_register.values, n_tiles, axis=0),
-                                         columns=file_register.columns)
-            file_register['tile_id'] = np.repeat([tile_names], n_entries, axis=0).flatten()
+            file_register = RasterDataWriter._add_tile_names_to_file_register(file_register, mosaic)
 
         if stack_dimension not in file_register.columns:
-            n_entries = len(file_register)
-            if data is not None:
-                layers = data[stack_dimension]
-                n_layers = len(layers)
-                file_register = pd.DataFrame(np.repeat(file_register.values, n_layers, axis=0),
-                                             columns=file_register.columns)
-                file_register[stack_dimension] = np.repeat([layers], n_entries, axis=0).flatten()
-            else:
-                layers = list(range(1, n_entries + 1))
-                file_register[stack_dimension] = layers
+            file_register = RasterDataWriter._add_stack_dims_to_file_register(file_register, stack_dimension, data)
 
         if 'filepath' not in file_register.columns:
-            dirpath = dirpath or os.getcwd()
-            filepaths = []
-            for _, row in file_register.iterrows():
-                fn_entries = dict()
-                for k, v in row.items():
-                    if k in fn_formatter.keys():
-                        v = fn_formatter[k](v)
-                    if isinstance(v, str):
-                        fn_entries[k] = v
-
-                filename = fn_pattern.format(**fn_entries)
-                filepaths.append(os.path.join(dirpath, filename))
-            file_register['filepath'] = filepaths
+            file_register = RasterDataWriter._add_filepaths_to_file_register(file_register, dirpath,
+                                                                             fn_pattern, fn_formatter)
 
         super().__init__(file_register, mosaic, data=data, stack_dimension=stack_dimension, stack_coords=stack_coords)
 
@@ -813,8 +888,137 @@ class RasterDataWriter(RasterData):
     def load(self, *args, **kwargs):
         """ Loads data from RAM. """
         if self._data is not None and self._data_geom is not None:
-            self._data = self.data
+            self._data = self.data_view
             self._data_geom.parent = None
+
+    @staticmethod
+    def _file_register_from_data(data, stack_dimension) -> pd.DataFrame:
+        """
+        Creates a file register with stack dimension coordinates in one column.
+
+        Parameters
+        ----------
+        data : xr.Dataset
+            Raster data.
+        stack_dimension : str
+            Dimension name representing the stack dimension of the file register.
+
+        Returns
+        -------
+        pd.DataFrame :
+            File register with stack dimension coordinates in one column.
+
+        """
+        layers = data[stack_dimension]
+        file_register_dict = dict()
+        file_register_dict[stack_dimension] = layers
+        return pd.DataFrame(file_register_dict)
+
+    @staticmethod
+    def _add_tile_names_to_file_register(file_register, mosaic) -> pd.DataFrame:
+        """
+        Adds all tiles of a mosaic to the given file register under the column 'tile_id'.
+
+        Parameters
+        ----------
+        file_register : pd.Dataframe
+            File register to add the tile names to.
+        mosaic : MosaicGeometry
+            Mosaic to extract tile information from.
+
+        Returns
+        -------
+        file_register : pd.Dataframe
+            Modified file register containing the tile names of the given mosaic.
+
+        """
+        n_entries = len(file_register)
+        tile_names = mosaic.all_tile_names
+        n_tiles = len(tile_names)
+        file_register = pd.DataFrame(np.repeat(file_register.values, n_tiles, axis=0),
+                                     columns=file_register.columns)
+        file_register['tile_id'] = np.repeat([tile_names], n_entries, axis=0).flatten()
+
+        return file_register
+
+    @staticmethod
+    def _add_stack_dims_to_file_register(file_register, stack_dimension, data=None):
+        """
+        Adds coordinate values along the stack dimension of the data to the given file register. If no data is given,
+        then a simple increment is used to represent the stack dimension.
+
+        Parameters
+        ----------
+        file_register : pd.Dataframe
+            File register to add the stack dimension coordinates to.
+        stack_dimension : str
+            Dimension name representing the stack dimension of the file register.
+        data : xr.Dataset, optional
+            Raster data.
+
+        Returns
+        -------
+        file_register : pd.DataFrame
+            File register with stack dimension coordinates added to.
+
+        """
+        n_entries = len(file_register)
+        if data is not None:
+            layers = data[stack_dimension]
+            n_layers = len(layers)
+            file_register = pd.DataFrame(np.repeat(file_register.values, n_layers, axis=0),
+                                         columns=file_register.columns)
+            file_register[stack_dimension] = np.repeat([layers], n_entries, axis=0).flatten()
+        else:
+            layers = list(range(1, n_entries + 1))
+            file_register[stack_dimension] = layers
+
+        return file_register
+
+    @staticmethod
+    def _add_filepaths_to_file_register(file_register, dirpath=None,
+                                        fn_pattern='{layer_id}.rd', fn_formatter=None) -> pd.DataFrame:
+        """
+        Adds a column containing the file paths to new datasets following the naming
+        convention derived from `dirpath`, `fn_pattern`, and `fn_formatter` to the given file register.
+
+        Parameters
+        ----------
+        file_register : pd.Dataframe
+            File register to add the stack dimension coordinates to.
+        dirpath : str, optional
+            Directory path to the folder where the GeoTIFF files should be written to. Defaults to none, i.e. the
+            current working directory is used.
+        fn_pattern : str, optional
+            Pattern for the filename of the new files. To fill in specific parts of the new file name with
+            information from the file register, you can specify the respective file register column names in curly
+            brackets and add them to the pattern string as desired. Defaults to '{layer_id}.rd'.
+        fn_formatter : dict, optional
+            Dictionary mapping file register column names with functions allowing to encode their values as strings.
+
+        Returns
+        -------
+        file_register : pd.DataFrame
+            File register with an additional column containing the file paths to new datasets following the naming
+            convention derived from `dirpath`, `fn_pattern`, and `fn_formatter`.
+
+        """
+        dirpath = dirpath or os.getcwd()
+        fn_formatter = fn_formatter or dict()
+        filepaths = []
+        for _, row in file_register.iterrows():
+            fn_entries = dict()
+            for k, v in row.items():
+                if k in fn_formatter.keys():
+                    v = fn_formatter[k](v)
+                if isinstance(v, str):
+                    fn_entries[k] = v
+
+            filename = fn_pattern.format(**fn_entries)
+            filepaths.append(os.path.join(dirpath, filename))
+        file_register['filepath'] = filepaths
+
+        return file_register
 
 
 if __name__ == '__main__':

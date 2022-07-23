@@ -1,7 +1,7 @@
 """
 Test NetCDF I/O.
 """
-
+import gc
 import os
 import shutil
 import unittest
@@ -19,21 +19,14 @@ from veranda.raster.native.netcdf import NetCdf4File, NetCdfXrFile
 
 
 class NetCdf4Test(unittest.TestCase):
-
     """
     Testing read and write for NetCDF4 files using netCDF4 as a backend.
     """
 
     def setUp(self):
-        """
-        Define test file.
-        """
         self.filepath = os.path.join(mkdtemp(), 'test.nc')
 
     def test_read_write(self):
-        """
-        Test a simple write and read operation.
-        """
         data = np.ones((100, 100, 100), dtype=np.float32)
         dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
@@ -55,9 +48,6 @@ class NetCdf4Test(unittest.TestCase):
             np.testing.assert_array_equal(ds['azi'][:], ds_ref['azi'][:])
 
     def test_auto_decoding(self):
-        """
-        Test automatic decoding of mosaic variables.
-        """
         data = np.ones((100, 100, 100), dtype=np.float32)
         dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
@@ -85,9 +75,6 @@ class NetCdf4Test(unittest.TestCase):
             np.testing.assert_array_equal(ds['azi'][:], ds_ref['azi'][:])
 
     def test_append(self):
-        """
-        Test appending to existing NetCDF file.
-        """
         data = np.ones((100, 100, 100), dtype=np.float32)
         dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
@@ -111,9 +98,6 @@ class NetCdf4Test(unittest.TestCase):
                 ds['sig'][:], np.repeat(ds_ref['sig'][:], 3, axis=0))
 
     def test_chunksizes(self):
-        """
-        Test setting chunksize.
-        """
         data = np.ones((100, 100, 100), dtype=np.float32)
         dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
@@ -131,9 +115,6 @@ class NetCdf4Test(unittest.TestCase):
             self.assertEqual(ds['inc'].data.chunksize, chunksizes)
 
     def test_chunk_cache(self):
-        """
-        Test setting chunk cache.
-        """
         data = np.ones((100, 100, 100), dtype=np.float32)
         dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
@@ -158,9 +139,6 @@ class NetCdf4Test(unittest.TestCase):
                              nc.src['sig'].get_var_chunk_cache())
 
     def test_time_units(self):
-        """
-        Test time series and time units.
-        """
         data = np.ones((100, 100, 100), dtype=np.float32)
         dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
@@ -178,9 +156,6 @@ class NetCdf4Test(unittest.TestCase):
                                           coords['time'])
 
     def test_geotransform(self):
-        """
-        Test computation of x and y coordinates.
-        """
         xdim = 100
         ydim = 200
         data = np.ones((100, ydim, xdim), dtype=np.float32)
@@ -206,7 +181,6 @@ class NetCdf4Test(unittest.TestCase):
         np.testing.assert_array_equal(ds['y'].values, y)
 
     def test_non_temporal_read_and_write(self):
-        """ Test read and write for a dataset not containing any temporal information. """
         data = np.ones((100, 100, 100), dtype=np.float32)
         dims = ['layer', 'y', 'x']
         coords = {'layer': range(data.shape[0])}
@@ -228,28 +202,18 @@ class NetCdf4Test(unittest.TestCase):
             np.testing.assert_array_equal(ds['azi'][:], ds_ref['azi'][:])
 
     def tearDown(self):
-        """
-        Remove test file.
-        """
         os.remove(self.filepath)
 
 
 class NetCdf4XrTest(unittest.TestCase):
-
     """
     Testing read and write for NetCDF4 files using xarray as a backend.
     """
 
     def setUp(self):
-        """
-        Define test file.
-        """
         self.filepath = os.path.join(mkdtemp(), 'test.nc')
 
     def test_read_write(self):
-        """
-        Test a simple write and read operation.
-        """
         data = np.ones((100, 100, 100), dtype=np.float32)
         dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
@@ -271,9 +235,6 @@ class NetCdf4XrTest(unittest.TestCase):
             np.testing.assert_array_equal(ds['azi'][:], ds_ref['azi'][:])
 
     def test_auto_decoding(self):
-        """
-        Test automatic decoding of mosaic variables.
-        """
         data = np.ones((100, 100, 100), dtype=np.float32)
         dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
@@ -301,9 +262,6 @@ class NetCdf4XrTest(unittest.TestCase):
             np.testing.assert_array_equal(ds['azi'][:], ds_ref['azi'][:])
 
     def test_chunksizes(self):
-        """
-        Test setting chunksize.
-        """
         data = np.ones((100, 100, 100), dtype=np.float32)
         dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
@@ -321,9 +279,6 @@ class NetCdf4XrTest(unittest.TestCase):
             self.assertEqual(ds['inc'].data.chunksize, chunksizes)
 
     def test_time_units(self):
-        """
-        Test time series and time units.
-        """
         data = np.ones((100, 100, 100), dtype=np.float32)
         dims = ['time', 'y', 'x']
         coords = {'time': pd.date_range('2000-01-01', periods=data.shape[0])}
@@ -341,9 +296,6 @@ class NetCdf4XrTest(unittest.TestCase):
                                           coords['time'])
 
     def test_geotransform(self):
-        """
-        Test computation of x and y coordinates.
-        """
         xdim = 100
         ydim = 200
         data = np.ones((100, ydim, xdim), dtype=np.float32)
@@ -369,7 +321,6 @@ class NetCdf4XrTest(unittest.TestCase):
         np.testing.assert_array_equal(ds['y'].values, y)
 
     def test_non_temporal_read_and_write(self):
-        """ Test read and write for a dataset not containing any temporal information. """
         data = np.ones((100, 100, 100), dtype=np.float32)
         dims = ['layer', 'y', 'x']
         coords = {'layer': range(data.shape[0])}
@@ -391,9 +342,6 @@ class NetCdf4XrTest(unittest.TestCase):
             np.testing.assert_array_equal(ds['azi'][:], ds_ref['azi'][:])
 
     def tearDown(self):
-        """
-        Remove test file.
-        """
         os.remove(self.filepath)
 
 
@@ -403,17 +351,11 @@ class NetCdfDataTest(unittest.TestCase):
     """
 
     def setUp(self):
-        """
-        Set up dummy mosaic set.
-        """
         self.path = mkdtemp()
         if not os.path.isdir(self.path):
             os.makedirs(self.path)
 
     def test_write_read_image_stack(self):
-        """
-        Test writing and reading an image stack.
-        """
         num_files = 50
         xsize = 60
         ysize = 50
@@ -439,17 +381,15 @@ class NetCdfDataTest(unittest.TestCase):
             ts2 = nc_reader.select_px_window(10, 12, width=5, height=5, inplace=False)
             ts2.read(data_variables=data_variable)
 
-        self.assertEqual(ts1.data[data_variable].shape, (num_files, 10, 10))
-        np.testing.assert_equal(ts1.data[data_variable], data[:, :10, :10])
+        self.assertEqual(ts1.data_view[data_variable].shape, (num_files, 10, 10))
+        np.testing.assert_equal(ts1.data_view[data_variable], data[:, :10, :10])
 
-        self.assertEqual(ts2.data[data_variable].shape, (num_files, 5, 5))
-        np.testing.assert_equal(ts2.data[data_variable], data[:, 10:15, 12:17])
+        self.assertEqual(ts2.data_view[data_variable].shape, (num_files, 5, 5))
+        np.testing.assert_equal(ts2.data_view[data_variable], data[:, 10:15, 12:17])
+
+        gc.collect()
 
     def test_read_decoded_image_stack(self):
-        """
-        Tests reading and decoding of an image stack.
-
-        """
         num_files = 25
         xsize = 60
         ysize = 50
@@ -477,16 +417,16 @@ class NetCdfDataTest(unittest.TestCase):
             ts1.read(data_variables=data_variables, auto_decode=True)
             ts2 = nc_reader.select_px_window(10, 12, width=5, height=5, inplace=False)
             ts2.read(data_variables=data_variables, auto_decode=True)
-            np.testing.assert_equal(ts1.data[data_variables[1]], data[:, :10, :10])
-            np.testing.assert_equal(ts2.data[data_variables[1]], data[:, 10:15, 12:17])
+            np.testing.assert_equal(ts1.data_view[data_variables[1]], data[:, :10, :10])
+            np.testing.assert_equal(ts2.data_view[data_variables[1]], data[:, 10:15, 12:17])
 
         with NetCdfReader.from_filepaths(filepaths) as nc_reader:
             ts1 = nc_reader.select_px_window(0, 0, width=10, height=10, inplace=False)
             ts1.read(data_variables=data_variables, auto_decode=False)
             ts2 = nc_reader.select_px_window(10, 12, width=5, height=5, inplace=False)
             ts2.read(data_variables=data_variables, auto_decode=False)
-            np.testing.assert_equal(ts1.data[data_variables[0]], data[:, :10, :10])
-            np.testing.assert_equal(ts2.data[data_variables[0]], data[:, 10:15, 12:17])
+            np.testing.assert_equal(ts1.data_view[data_variables[0]], data[:, :10, :10])
+            np.testing.assert_equal(ts2.data_view[data_variables[0]], data[:, 10:15, 12:17])
 
         data = data * 2. + 3.
         with NetCdfReader.from_filepaths(filepaths) as nc_reader:
@@ -494,11 +434,12 @@ class NetCdfDataTest(unittest.TestCase):
             ts1.read(data_variables=data_variables, auto_decode=True)
             ts2 = nc_reader.select_px_window(10, 12, width=5, height=5, inplace=False)
             ts2.read(data_variables=data_variables, auto_decode=True)
-            np.testing.assert_equal(ts1.data[data_variables[0]], data[:, :10, :10])
-            np.testing.assert_equal(ts2.data[data_variables[0]], data[:, 10:15, 12:17])
+            np.testing.assert_equal(ts1.data_view[data_variables[0]], data[:, :10, :10])
+            np.testing.assert_equal(ts2.data_view[data_variables[0]], data[:, 10:15, 12:17])
+
+        gc.collect()
 
     def test_write_selections(self):
-        """ Tests writing mosaic after some select operations have been applied. """
         num_files = 10
         xsize = 60
         ysize = 50
@@ -523,10 +464,10 @@ class NetCdfDataTest(unittest.TestCase):
             ur_data = nc_writer.select_px_window(0, 30, height=25, width=30)
             ll_data = nc_writer.select_px_window(25, 0, height=25, width=30)
             lr_data = nc_writer.select_px_window(25, 30, height=25, width=30)
-            nc_writer.write(ul_data.data)
-            nc_writer.write(ur_data.data)
-            nc_writer.write(ll_data.data)
-            nc_writer.write(lr_data.data)
+            nc_writer.write(ul_data.data_view)
+            nc_writer.write(ur_data.data_view)
+            nc_writer.write(ll_data.data_view)
+            nc_writer.write(lr_data.data_view)
             filepaths = list(set(nc_writer.file_register['filepath']))
 
         with NetCdfReader.from_filepaths(filepaths) as nc_reader:
@@ -534,13 +475,12 @@ class NetCdfDataTest(unittest.TestCase):
             ts1.read(data_variables=data_variable)
             ts2 = nc_reader.select_px_window(45, 55, width=5, height=5, inplace=False)
             ts2.read(data_variables=data_variable)
-            np.testing.assert_equal(ts1.data[data_variable], data[layer_ids, :10, :10])
-            np.testing.assert_equal(ts2.data[data_variable], data[layer_ids, 45:, 55:])
+            np.testing.assert_equal(ts1.data_view[data_variable], data[layer_ids, :10, :10])
+            np.testing.assert_equal(ts2.data_view[data_variable], data[layer_ids, 45:, 55:])
+
+        gc.collect()
 
     def tearDown(self):
-        """
-        Remove test file.
-        """
         shutil.rmtree(self.path)
 
 

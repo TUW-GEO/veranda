@@ -17,15 +17,11 @@ from veranda.raster.mosaic.geotiff import GeoTiffReader, GeoTiffWriter
 class GeoTiffFileTest(unittest.TestCase):
 
     def setUp(self):
-        """
-        Set up dummy mosaic set.
-        """
+
         self.filepath = os.path.join(mkdtemp(), 'test.tif')
 
-    def test_read_write_1_band(self):
-        """
-        Test a write and read of a single band mosaic.
-        """
+    def test_read_write_one_band(self):
+
         data = np.ones((1, 100, 100), dtype=np.float32)
 
         with GeoTiffFile(self.filepath, mode='w') as src:
@@ -37,9 +33,7 @@ class GeoTiffFileTest(unittest.TestCase):
         np.testing.assert_array_equal(ds[1], data[0, :, :])
 
     def test_read_write_multi_band(self):
-        """
-        Test write and read of a multi band mosaic.
-        """
+
         data = np.ones((5, 100, 100), dtype=np.float32)
 
         with GeoTiffFile(self.filepath, mode='w', n_bands=5) as src:
@@ -52,10 +46,7 @@ class GeoTiffFileTest(unittest.TestCase):
                     ds[band + 1], data[band, :, :])
 
     def test_decoding_multi_band(self):
-        """
-        Test decoding of multi band mosaic.
 
-        """
         data = np.ones((5, 100, 100), dtype=np.float32)
         scale_factors = {1: 1, 2: 2, 3: 1, 4: 1, 5: 3}
         offsets = {2: 3}
@@ -83,9 +74,7 @@ class GeoTiffFileTest(unittest.TestCase):
             np.testing.assert_array_equal(ds[5], data[4, :, :])
 
     def test_read_write_specific_band(self):
-        """
-        Test a write and read of a specific mosaic.
-        """
+
         data = np.ones((100, 100), dtype=np.float32)
 
         with GeoTiffFile(self.filepath, mode='w', n_bands=10) as src:
@@ -99,9 +88,7 @@ class GeoTiffFileTest(unittest.TestCase):
             np.testing.assert_array_equal(ds[10], data)
 
     def test_metadata(self):
-        """
-        Test meta mosaic tags.
-        """
+
         data = np.ones((1, 100, 100), dtype=np.float32)
 
         metadata = {'attr1': '123', 'attr2': 'test'}
@@ -148,9 +135,7 @@ class GeoTiffFileTest(unittest.TestCase):
         self.assertEqual(geotrans_val, geotrans_ref)
 
     def tearDown(self):
-        """
-        Remove test file.
-        """
+
         os.remove(self.filepath)
 
 
@@ -160,17 +145,13 @@ class GeoTiffDataTest(unittest.TestCase):
     """
 
     def setUp(self):
-        """
-        Set up dummy mosaic set.
-        """
+
         self.path = mkdtemp()
         if not os.path.isdir(self.path):
             os.makedirs(self.path)
 
     def test_write_read_image_stack(self):
-        """
-        Test writing and reading an image stack.
-        """
+
         num_files = 50
         xsize = 60
         ysize = 50
@@ -197,17 +178,14 @@ class GeoTiffDataTest(unittest.TestCase):
             ts2 = gt_reader.select_px_window(10, 12, width=5, height=5, inplace=False)
             ts2.read(band_names=(band_name,))
 
-        self.assertEqual(ts1.data[band_name].shape, (num_files, 10, 10))
-        np.testing.assert_equal(ts1.data[band_name], data[:, :10, :10])
+        self.assertEqual(ts1.data_view[band_name].shape, (num_files, 10, 10))
+        np.testing.assert_equal(ts1.data_view[band_name], data[:, :10, :10])
 
-        self.assertEqual(ts2.data[band_name].shape, (num_files, 5, 5))
-        np.testing.assert_equal(ts2.data[band_name], data[:, 10:15, 12:17])
+        self.assertEqual(ts2.data_view[band_name].shape, (num_files, 5, 5))
+        np.testing.assert_equal(ts2.data_view[band_name], data[:, 10:15, 12:17])
 
     def test_read_decoded_image_stack(self):
-        """
-        Tests reading and decoding of an image stack.
 
-        """
         num_files = 25
         xsize = 60
         ysize = 50
@@ -235,16 +213,16 @@ class GeoTiffDataTest(unittest.TestCase):
             ts1.read(bands=(1, 2), band_names=band_names, auto_decode=True)
             ts2 = gt_reader.select_px_window(10, 12, width=5, height=5, inplace=False)
             ts2.read(bands=(1, 2), band_names=band_names, auto_decode=True)
-            np.testing.assert_equal(ts1.data[band_names[1]], data[:, :10, :10])
-            np.testing.assert_equal(ts2.data[band_names[1]], data[:, 10:15, 12:17])
+            np.testing.assert_equal(ts1.data_view[band_names[1]], data[:, :10, :10])
+            np.testing.assert_equal(ts2.data_view[band_names[1]], data[:, 10:15, 12:17])
 
         with GeoTiffReader.from_filepaths(filepaths) as gt_reader:
             ts1 = gt_reader.select_px_window(0, 0, width=10, height=10, inplace=False)
             ts1.read(bands=(1, 2), band_names=band_names, auto_decode=False)
             ts2 = gt_reader.select_px_window(10, 12, width=5, height=5, inplace=False)
             ts2.read(bands=(1, 2), band_names=band_names, auto_decode=False)
-            np.testing.assert_equal(ts1.data[band_names[0]], data[:, :10, :10])
-            np.testing.assert_equal(ts2.data[band_names[0]], data[:, 10:15, 12:17])
+            np.testing.assert_equal(ts1.data_view[band_names[0]], data[:, :10, :10])
+            np.testing.assert_equal(ts2.data_view[band_names[0]], data[:, 10:15, 12:17])
 
         data = data * 2. + 3.
         with GeoTiffReader.from_filepaths(filepaths) as gt_reader:
@@ -252,11 +230,11 @@ class GeoTiffDataTest(unittest.TestCase):
             ts1.read(bands=(1, 2), band_names=band_names, auto_decode=True)
             ts2 = gt_reader.select_px_window(10, 12, width=5, height=5, inplace=False)
             ts2.read(bands=(1, 2), band_names=band_names, auto_decode=True)
-            np.testing.assert_equal(ts1.data[band_names[0]], data[:, :10, :10])
-            np.testing.assert_equal(ts2.data[band_names[0]], data[:, 10:15, 12:17])
+            np.testing.assert_equal(ts1.data_view[band_names[0]], data[:, :10, :10])
+            np.testing.assert_equal(ts2.data_view[band_names[0]], data[:, 10:15, 12:17])
 
     def test_write_selections(self):
-        """ Tests writing mosaic after some select operations have been applied. """
+
         num_files = 10
         xsize = 60
         ysize = 50
@@ -282,10 +260,10 @@ class GeoTiffDataTest(unittest.TestCase):
             ur_data = gt_writer.select_px_window(0, 30, height=25, width=30)
             ll_data = gt_writer.select_px_window(25, 0, height=25, width=30)
             lr_data = gt_writer.select_px_window(25, 30, height=25, width=30)
-            gt_writer.write(ul_data.data)
-            gt_writer.write(ur_data.data)
-            gt_writer.write(ll_data.data)
-            gt_writer.write(lr_data.data)
+            gt_writer.write(ul_data.data_view, apply_tiling=True)
+            gt_writer.write(ur_data.data_view, apply_tiling=True)
+            gt_writer.write(ll_data.data_view, apply_tiling=True)
+            gt_writer.write(lr_data.data_view, apply_tiling=True)
             filepaths = list(gt_writer.file_register['filepath'])
 
         with GeoTiffReader.from_filepaths(filepaths) as gt_reader:
@@ -293,13 +271,10 @@ class GeoTiffDataTest(unittest.TestCase):
             ts1.read(band_names=band_name)
             ts2 = gt_reader.select_px_window(45, 55, width=5, height=5, inplace=False)
             ts2.read(band_names=band_name)
-            np.testing.assert_equal(ts1.data[band_name], data[layer_ids, :10, :10])
-            np.testing.assert_equal(ts2.data[band_name], data[layer_ids, 45:, 55:])
+            np.testing.assert_equal(ts1.data_view[band_name], data[layer_ids, :10, :10])
+            np.testing.assert_equal(ts2.data_view[band_name], data[layer_ids, 45:, 55:])
 
     def tearDown(self):
-        """
-        Remove test file.
-        """
         shutil.rmtree(self.path)
 
 

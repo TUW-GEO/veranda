@@ -13,9 +13,9 @@ from veranda.raster.gdalport import NUMPY_TO_GDAL_DTYPE, GDAL_TO_NUMPY_DTYPE
 
 class GeoTiffFile:
     """ GDAL wrapper for reading or writing a GeoTIFF file. """
-    def __init__(self, filepath, mode='r', geotrans=(0, 1, 0, 0, 0, 1), sref_wkt=None, shape=None,
+    def __init__(self, filepath, mode='r', geotrans=(0, 1, 0, 0, 0, 1), sref_wkt=None, raster_shape=None,
                  compression='LZW', metadata=None, is_bigtiff=False, is_tiled=True, blocksize=(512, 512),
-                 n_bands=1,  dtypes='uint8', scale_factors=1, offsets=0, nodatavals=255, color_tbls=None,
+                 n_bands=1, dtypes='uint8', scale_factors=1, offsets=0, nodatavals=255, color_tbls=None,
                  color_intprs=None, overwrite=False, auto_decode=False):
         """
         Constructor of `GeoTiffFile`.
@@ -39,8 +39,8 @@ class GeoTiffFile:
             Defaults to (0, 1, 0, 0, 0, 1).
         sref_wkt : str, optional
             Coordinate Reference System (CRS) information in WKT format. Defaults to None.
-        shape : 2-tuple, optional
-            2D shape of the raster. Defaults to None, i.e. (1, 1).
+        raster_shape : 2-tuple, optional
+            2D raster_shape of the raster. Defaults to None, i.e. (1, 1).
         compression : str, optional
             Set the compression to use. Defaults to 'LZW'.
         metadata : dict, optional
@@ -85,7 +85,7 @@ class GeoTiffFile:
         self.mode = mode
         self.geotrans = geotrans
         self.sref_wkt = sref_wkt
-        self.shape = shape
+        self.raster_shape = raster_shape
         self.compression = compression
         self.metadata = dict() if metadata is None else metadata
         self.is_bigtiff = is_bigtiff
@@ -115,7 +115,7 @@ class GeoTiffFile:
             self._color_tbls[band] = color_tbls.get(band, None)
             self._color_intprs[band] = color_intprs.get(band, None)
 
-        if shape is not None or self.mode == 'r':
+        if raster_shape is not None or self.mode == 'r':
             self._open()
 
     @property
@@ -186,7 +186,7 @@ class GeoTiffFile:
                 err_msg = f"File '{self.filepath}' does not exist."
                 raise FileNotFoundError(err_msg)
             self.src = gdal.Open(self.filepath, gdal.GA_ReadOnly)
-            self.shape = self.src.RasterYSize, self.src.RasterXSize
+            self.raster_shape = self.src.RasterYSize, self.src.RasterXSize
             self.geotrans = self.src.GetGeoTransform()
             self.sref_wkt = self.src.GetProjection()
             self.metadata = self.src.GetMetadata()
@@ -227,7 +227,7 @@ class GeoTiffFile:
             gdal_opt['BLOCKYSIZE'] = str(self.blocksize[1])
             gdal_opt['BIGTIFF'] = 'YES' if self.is_bigtiff else 'NO'
             gdal_opt = ['='.join((k, v)) for k, v in gdal_opt.items()]
-            self.src = self._driver.Create(self.filepath, self.shape[1], self.shape[0],
+            self.src = self._driver.Create(self.filepath, self.raster_shape[1], self.raster_shape[0],
                                            self.n_bands, NUMPY_TO_GDAL_DTYPE[self.dtypes[0]],
                                            options=gdal_opt)
 
@@ -283,8 +283,8 @@ class GeoTiffFile:
         """
 
         decoder_kwargs = decoder_kwargs or dict()
-        n_rows = self.shape[0] if n_rows is None else n_rows
-        n_cols = self.shape[1] if n_cols is None else n_cols
+        n_rows = self.raster_shape[0] if n_rows is None else n_rows
+        n_cols = self.raster_shape[1] if n_cols is None else n_cols
         bands = bands or self.bands
         bands = to_list(bands)
 
@@ -342,7 +342,7 @@ class GeoTiffFile:
         data_bands = list(data_write.keys())
         data_shape = data_write[data_bands[0]].shape
         if self.src is None:
-            self.shape = data_shape
+            self.raster_shape = data_shape
             self._open()
 
         for band in data_bands:
@@ -496,4 +496,3 @@ def create_vrt_file(filepaths, vrt_filepath, shape, sref_wkt, geotrans, bands=1)
 
 if __name__ == '__main__':
     pass
-

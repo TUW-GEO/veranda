@@ -719,7 +719,7 @@ class NetCdfXrFile:
 
     @property
     def raster_shape(self) -> Tuple[int, int]:
-        """ 2-tuple: Tuple specifying the shape of the raster (defined by the spatial dimensions). """
+        """ 2-tuple: Tuple specifying the raster_shape of the raster (defined by the spatial dimensions). """
         return len(self.src[self._space_dims[0]]), len(self.src[self._space_dims[1]])
 
     def _open(self, ds=None):
