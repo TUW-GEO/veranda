@@ -464,10 +464,10 @@ class NetCdfDataTest(unittest.TestCase):
             ur_data = nc_writer.select_px_window(0, 30, height=25, width=30)
             ll_data = nc_writer.select_px_window(25, 0, height=25, width=30)
             lr_data = nc_writer.select_px_window(25, 30, height=25, width=30)
-            nc_writer.write(ul_data.data_view)
-            nc_writer.write(ur_data.data_view)
-            nc_writer.write(ll_data.data_view)
-            nc_writer.write(lr_data.data_view)
+            nc_writer.write(ul_data.data_view, apply_tiling=True)
+            nc_writer.write(ur_data.data_view, apply_tiling=True)
+            nc_writer.write(ll_data.data_view, apply_tiling=True)
+            nc_writer.write(lr_data.data_view, apply_tiling=True)
             filepaths = list(set(nc_writer.file_register['filepath']))
 
         with NetCdfReader.from_filepaths(filepaths) as nc_reader:

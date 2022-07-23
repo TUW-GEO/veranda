@@ -235,14 +235,14 @@ class GeoTiffReader(RasterDataReader):
         """
         bands = to_list(bands)
         band_names = to_list(band_names)
-        new_tile = Tile.from_extent(self._mosaic.outer_extent, sref=self._mosaic.sref,
+        dst_tile = Tile.from_extent(self._mosaic.outer_extent, sref=self._mosaic.sref,
                                     x_pixel_size=self._mosaic.x_pixel_size,
                                     y_pixel_size=self._mosaic.y_pixel_size,
                                     name='0')
 
-        shm_map = {band: self.__init_band_data(band, new_tile) for band in bands}
-        access_map = {tile.name: GeoTiffAccess(tile, new_tile) for tile in self._mosaic.tiles}
-        data_mask = self.__create_data_mask_from(access_map, new_tile.shape)
+        shm_map = {band: self.__init_band_data(band, dst_tile) for band in bands}
+        access_map = {src_tile.name: GeoTiffAccess(src_tile, dst_tile) for src_tile in self._mosaic.tiles}
+        data_mask = self.__create_data_mask_from(access_map, dst_tile.shape)
 
         if engine == 'vrt':
             self.__read_vrt_stack(access_map, shm_map, n_cores=n_cores, auto_decode=auto_decode, decoder=decoder,
@@ -256,7 +256,7 @@ class GeoTiffReader(RasterDataReader):
 
         data = {band: self.__load_band_data(band, shm_map, data_mask) for band in bands}
 
-        self._data_geom = new_tile
+        self._data_geom = dst_tile
         self._data = self._to_xarray(data, band_names)
         self._add_grid_mapping()
         return self
@@ -484,6 +484,41 @@ class GeoTiffWriter(RasterDataWriter):
         super().__init__(mosaic, file_register=file_register, data=data, stack_dimension=stack_dimension,
                          stack_coords=stack_coords, dirpath=dirpath, fn_pattern=fn_pattern, fn_formatter=fn_formatter)
 
+    def __get_encoding_info_from_data(self, data, band_names) -> Tuple[dict, dict, dict, dict]:
+        """
+        Extracts encoding information from an xarray dataset.
+
+        Parameters
+        ----------
+        data : xr.Dataset
+            Data to extract encoding info from.
+        band_names : list of str
+            List of band names.
+
+        Returns
+        -------
+        nodatavals : dict
+            Band number mapped to no data value (defaults to 0).
+        scale_factors : dict
+            Band number mapped to scale factor (defaults to 1).
+        offsets : dict
+            Band number mapped to offset (defaults to 0).
+        dtypes : dict
+            Band number mapped to data type.
+
+        """
+        nodatavals = dict()
+        scale_factors = dict()
+        offsets = dict()
+        dtypes = dict()
+        for i, band_name in enumerate(band_names):
+            dtypes[i + 1] = data[band_name].data.dtype.name
+            nodatavals[i + 1] = data[band_name].attrs.get('_FillValue', 0)
+            scale_factors[i + 1] = data[band_name].attrs.get('scale_factor', 1)
+            offsets[i + 1] = data[band_name].attrs.get('add_offset', 0)
+
+        return nodatavals, scale_factors, offsets, dtypes
+
     def write(self, data, apply_tiling=False, encoder=None, encoder_kwargs=None, overwrite=False, **kwargs):
         """
         Writes a certain chunk of data to disk.
@@ -507,7 +542,7 @@ class GeoTiffWriter(RasterDataWriter):
 
         band_names = list(data.data_vars)
         n_bands = len(band_names)
-        nodatavals, scale_factors, offsets, dtypes = self.__get_encoding_info_from_data(band_names)
+        nodatavals, scale_factors, offsets, dtypes = self.__get_encoding_info_from_data(data, band_names)
 
         for filepath, file_group in self._file_register.groupby('filepath'):
             tile_id = file_group.iloc[0].get('tile_id', '0')
@@ -517,21 +552,21 @@ class GeoTiffWriter(RasterDataWriter):
             data_write = xrds[band_names].to_array().data
 
             if apply_tiling:
-                tile = self._mosaic[tile_id]
-                if not tile.intersects(data_geom):
+                src_tile = self._mosaic[tile_id]
+                if not src_tile.intersects(data_geom):
                     continue
-                tile_write = data_geom.slice_by_geom(tile, inplace=False, name='0')
-                gt_access = GeoTiffAccess(tile_write, tile, src_root_raster_geom=data_geom)
+                dst_tile = data_geom.slice_by_geom(src_tile, inplace=False, name='0')
+                gt_access = GeoTiffAccess(dst_tile, src_tile, src_root_raster_geom=data_geom)
                 data_write = data_write[..., gt_access.src_row_slice, gt_access.src_col_slice]
             else:
-                tile = data_geom
-                tile_write = data_geom
-                gt_access = GeoTiffAccess(tile_write, tile, src_root_raster_geom=data_geom)
+                src_tile = data_geom
+                dst_tile = data_geom
+                gt_access = GeoTiffAccess(dst_tile, src_tile, src_root_raster_geom=data_geom)
 
             file_id = file_group.iloc[0].get('file_id', None)
             if file_id is None:
-                gt_file = GeoTiffFile(filepath, mode='w', geotrans=tile.geotrans, sref_wkt=tile.sref.wkt,
-                                      raster_shape=tile.shape, n_bands=n_bands, dtypes=dtypes,
+                gt_file = GeoTiffFile(filepath, mode='w', geotrans=src_tile.geotrans, sref_wkt=src_tile.sref.wkt,
+                                      raster_shape=src_tile.shape, n_bands=n_bands, dtypes=dtypes,
                                       scale_factors=scale_factors, offsets=offsets, nodatavals=nodatavals)
                 file_id = len(list(self._files.keys())) + 1
                 self._files[file_id] = gt_file
@@ -539,7 +574,7 @@ class GeoTiffWriter(RasterDataWriter):
 
             gt_file = self._files[file_id]
             gt_file.write(data_write[..., gt_access.src_row_slice,
-                                     gt_access.src_col_slice].reshape((-1, tile_write.n_rows, tile_write.n_cols)),
+                                     gt_access.src_col_slice].reshape((-1, dst_tile.n_rows, dst_tile.n_cols)),
                           row=gt_access.dst_window[0], col=gt_access.dst_window[1],
                           encoder=encoder, encoder_kwargs=encoder_kwargs)
 
@@ -562,39 +597,6 @@ class GeoTiffWriter(RasterDataWriter):
         """
 
         self.write(self._data, apply_tiling, encoder, encoder_kwargs, overwrite, **kwargs)
-
-    def __get_encoding_info_from_data(self, band_names) -> Tuple[dict, dict, dict, dict]:
-        """
-        Extracts encoding information from internal data.
-
-        Parameters
-        ----------
-        band_names : list of str
-            List of band names.
-
-        Returns
-        -------
-        nodatavals : dict
-            Band number mapped to no data value (defaults to 0).
-        scale_factors : dict
-            Band number mapped to scale factor (defaults to 1).
-        offsets : dict
-            Band number mapped to offset (defaults to 0).
-        dtypes : dict
-            Band number mapped to data type.
-
-        """
-        nodatavals = dict()
-        scale_factors = dict()
-        offsets = dict()
-        dtypes = dict()
-        for i, band_name in enumerate(band_names):
-            dtypes[i + 1] = self._data[band_name].data.dtype.name
-            nodatavals[i + 1] = self._data[band_name].attrs.get('_FillValue', 0)
-            scale_factors[i + 1] = self._data[band_name].attrs.get('scale_factor', 1)
-            offsets[i + 1] = self._data[band_name].attrs.get('add_offset', 0)
-
-        return nodatavals, scale_factors, offsets, dtypes
 
 
 def read_vrt_stack(tile_id):
