@@ -82,7 +82,7 @@ class NetCdf4Test(unittest.TestCase):
         ds_ref = xr.Dataset({'sig': (dims, data),
                              'inc': (dims, data)}, coords=coords)
 
-        with NetCdf4File(self.filepath, mode='w') as nc:
+        with NetCdf4File(self.filepath, mode='w', stack_dims={'time': None}) as nc:
             nc.write(ds_ref)
 
         with NetCdf4File(self.filepath, mode='a') as nc:
