@@ -658,12 +658,13 @@ def _assign_vrt_stack_per_band(tile_id, band, src, vrt_data):
     gt_access = access_map[tile_id]
     bands = list(shm_map.keys())
     n_bands = len(bands)
+    b_idx = bands.index(band)
 
-    band_data = vrt_data[(band - 1)::n_bands, ...]
-    scale_factor = src.GetRasterBand(band).GetScale()
-    nodataval = src.GetRasterBand(band).GetNoDataValue()
-    offset = src.GetRasterBand(band).GetOffset()
-    dtype = GDAL_TO_NUMPY_DTYPE[src.GetRasterBand(band).DataType]
+    band_data = vrt_data[b_idx::n_bands, ...]
+    scale_factor = src.GetRasterBand(b_idx + 1).GetScale()
+    nodataval = src.GetRasterBand(b_idx + 1).GetNoDataValue()
+    offset = src.GetRasterBand(b_idx + 1).GetOffset()
+    dtype = GDAL_TO_NUMPY_DTYPE[src.GetRasterBand(b_idx + 1).DataType]
     if auto_decode:
         band_data = band_data.astype(float)
         band_data[band_data == nodataval] = np.nan

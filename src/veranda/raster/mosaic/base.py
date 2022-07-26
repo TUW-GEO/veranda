@@ -574,13 +574,25 @@ class RasterData(metaclass=abc.ABCMeta):
             self._file_register['file_id'] = None
             file_ids = list(self._files.keys())
 
-        for file_id in file_ids:
-            self._files[file_id].close()
-            del self._files[file_id]
+        self.__close_file_handles(file_ids)
 
     def clear_ram(self):
         """ Releases memory allocated by the internal data object. """
         self._data = None
+
+    def __close_file_handles(self, file_ids):
+        """
+        Closes stored file handles and removes them from the internal dictionary.
+
+        Parameters
+        ----------
+        file_ids : list of int
+            List of file IDs.
+
+        """
+        for file_id in file_ids:
+            self._files[file_id].close()
+            del self._files[file_id]
 
     def __enter__(self):
         return self
@@ -602,11 +614,16 @@ class RasterData(metaclass=abc.ABCMeta):
             Deepcopy of raster data.
 
         """
+
         cls = self.__class__
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
+            if k == '_files':  # skip existing file pointers, can't be copied
+                continue
             setattr(result, k, copy.deepcopy(v, memo))
+
+        result._file_register['file_id'] = None  # remove existing file IDs
         return result
 
     def _repr_html_(self) -> str:
