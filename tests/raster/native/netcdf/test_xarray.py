@@ -1,4 +1,4 @@
-from tests.raster.native.netcdf.netcdf_common import *
+from netcdf_common import *
 from veranda.raster.native.netcdf import NetCdfXrFile
 
 
@@ -88,7 +88,3 @@ def test_non_temporal_read_and_write(filepath, nt_ds):
         np.testing.assert_array_equal(ds['sig'][:], nt_ds['sig'][:])
         np.testing.assert_array_equal(ds['inc'][:], nt_ds['inc'][:])
         np.testing.assert_array_equal(ds['azi'][:], nt_ds['azi'][:])
-
-
-if __name__ == '__main__':
-    pass

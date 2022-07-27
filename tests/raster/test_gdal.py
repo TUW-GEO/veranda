@@ -47,7 +47,3 @@ def test_biproj_point(e7_wkt):
 
     assert point_proj.GetX() == lon
     assert point_proj.GetY() == lat
-
-
-if __name__ == '__main__':
-    pass

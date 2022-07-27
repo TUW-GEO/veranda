@@ -1,5 +1,5 @@
 from veranda.raster.mosaic.geotiff import GeoTiffReader, GeoTiffWriter
-from tests.raster.mosaic.mosaic_common import *
+from mosaic_common import *
 
 
 def test_write_read_image_stack(simple_ds, mosaic, tmp_path):
@@ -65,7 +65,3 @@ def test_write_after_selections(simple_ds, mosaic, tmp_path):
                            bands=[1], band_names=[band_name])
         assert_reader_data(simple_ds, gt_reader, 45, 55, 5, 5, [band_name],
                            bands=[1], band_names=[band_name])
-
-
-if __name__ == '__main__':
-    pass

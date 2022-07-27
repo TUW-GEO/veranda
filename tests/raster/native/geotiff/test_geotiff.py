@@ -137,7 +137,3 @@ def test_sref(filepath):
             sref_val = src.sref_wkt
 
         assert sref_val == sref_ref
-
-
-if __name__ == '__main__':
-    pass

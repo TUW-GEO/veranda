@@ -26,7 +26,3 @@ def test_gdal_translate(in_filepath, out_filepath):
                                      options=options)
 
     assert succeed
-
-
-if __name__ == '__main__':
-    pass

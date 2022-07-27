@@ -1,10 +1,18 @@
 import gc
 import os
-from tests.raster.mosaic.mosaic_common import *
+from mosaic_common import *
 from veranda.raster.mosaic.netcdf import NetCdfReader, NetCdfWriter
 
 
-def test_write_read_image_stack(simple_ds, mosaic, tmp_path):
+@pytest.fixture
+def clean_garbage():
+    try:
+        yield
+    finally:
+        gc.collect()
+
+
+def test_write_read_image_stack(simple_ds, mosaic, tmp_path, clean_garbage):
     data_var_name = [data_var for data_var in simple_ds.data_vars][0]
     dst_filepath = os.path.join(tmp_path, "test.nc")
 
@@ -17,10 +25,8 @@ def test_write_read_image_stack(simple_ds, mosaic, tmp_path):
         assert_reader_data(simple_ds, nc_reader, 10, 12, 5, 5, [data_var_name],
                            data_variables=[data_var_name])
 
-    gc.collect()
 
-
-def test_read_decoded_image_stack(complex_ds, mosaic, tmp_path):
+def test_read_decoded_image_stack(complex_ds, mosaic, tmp_path, clean_garbage):
     data_var_names = [data_var for data_var in complex_ds.data_vars]
     dst_filepath = os.path.join(tmp_path, "test.nc")
 
@@ -47,10 +53,8 @@ def test_read_decoded_image_stack(complex_ds, mosaic, tmp_path):
         assert_reader_data(complex_ds, nc_reader, 10, 12, 5, 5, data_var_names[:1],
                            data_variables=data_var_names[:1], auto_decode=True)
 
-    gc.collect()
 
-
-def test_write_selections(simple_ds, mosaic, tmp_path):
+def test_write_selections(simple_ds, mosaic, tmp_path, clean_garbage):
     data_var_name = [data_var for data_var in simple_ds.data_vars][0]
     dst_filepath = os.path.join(tmp_path, "test.nc")
     layer_ids = [0, 5, 9]
@@ -70,9 +74,3 @@ def test_write_selections(simple_ds, mosaic, tmp_path):
                            data_variables=[data_var_name])
         assert_reader_data(simple_ds, nc_reader, 45, 55, 5, 5, [data_var_name],
                            data_variables=[data_var_name])
-
-    gc.collect()
-
-
-if __name__ == '__main__':
-    pass

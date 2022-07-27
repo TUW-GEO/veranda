@@ -2,7 +2,7 @@
 
 import os
 import subprocess
-
+from typing import Tuple
 from osgeo import gdal
 from osgeo.gdalconst import GA_Update
 
@@ -39,7 +39,7 @@ GDAL_RESAMPLE_TYPE = {"nearest": gdal.GRA_NearestNeighbour,
                       }
 
 
-def dtype_np2gdal(np_dtype):
+def dtype_np2gdal(np_dtype) -> object:
     """
     Get GDAL data type from a NumPy-style data type.
 
@@ -57,7 +57,7 @@ def dtype_np2gdal(np_dtype):
     return NUMPY_TO_GDAL_DTYPE.get(np_dtype.lower())
 
 
-def rtype_str2gdal(resampling_method):
+def rtype_str2gdal(resampling_method) -> object:
     """
     Get GDAL resample type from resampling method.
 
@@ -75,7 +75,7 @@ def rtype_str2gdal(resampling_method):
     return GDAL_RESAMPLE_TYPE.get(resampling_method.lower())
 
 
-def try_get_gdal_installation_path(gdal_path=None):
+def try_get_gdal_installation_path(gdal_path=None) -> str:
     """
     Tries to find the system path to the GDAL utilities if not already provided.
 
@@ -101,7 +101,7 @@ def try_get_gdal_installation_path(gdal_path=None):
     return gdal_path
 
 
-def add_options_to_cli_command_list(options):
+def convert_gdal_options_to_command_list(options) -> list:
     """
     Prepares command line arguments for a GDAL utility.
 
@@ -139,12 +139,12 @@ def add_options_to_cli_command_list(options):
     return cmd_options
 
 
-def string2cli_arg(string):
+def string2cli_arg(string) -> str:
     """ Decorates the given string with double quotes. """
     return f'"{string}"'
 
 
-def call_gdal_util(util_name, src_files, dst_file=None, options=None, gdal_path=None):
+def call_gdal_util(util_name, src_files, dst_file=None, options=None, gdal_path=None) -> Tuple[bool, str]:
     """
     Call a GDAL utility to run a GDAL operation (see http://www.gdal.org/gdal_utilities.html).
 
@@ -183,7 +183,7 @@ def call_gdal_util(util_name, src_files, dst_file=None, options=None, gdal_path=
     cmd = []
     gdal_cmd = os.path.join(gdal_path, util_name) if gdal_path else util_name
     cmd.append(string2cli_arg(gdal_cmd))
-    cmd.extend(add_options_to_cli_command_list(options))
+    cmd.extend(convert_gdal_options_to_command_list(options))
 
     # add source files and destination file (in double quotation)
     if isinstance(src_files, (tuple, list)):
@@ -200,7 +200,7 @@ def call_gdal_util(util_name, src_files, dst_file=None, options=None, gdal_path=
     return successful, output
 
 
-def _find_gdal_path():
+def _find_gdal_path() -> str:
     """
     Looks-up the GDAL installation path from the system environment variables, i.e. if "GDAL_UTIL_HOME" is set.
 
@@ -214,7 +214,7 @@ def _find_gdal_path():
     return os.environ[env_name] if env_name in os.environ else None
 
 
-def _analyse_gdal_output(output):
+def _analyse_gdal_output(output) -> bool:
     """
     Analyses console output from a GDAL utility, i.e. it tries to determine if a process was successful or not.
 
@@ -240,7 +240,7 @@ def _analyse_gdal_output(output):
         return False
 
 
-def _add_scale_option(options, stretch=None, src_nodata=None):
+def _add_scale_option(options, stretch=None, src_nodata=None) -> dict:
     """
     Adds scale (and no data value) settings to dictionary containing command line options for gdal_translate.
 
@@ -281,7 +281,7 @@ def _add_scale_option(options, stretch=None, src_nodata=None):
 
 
 def gen_qlook(src_file, dst_file=None, src_nodata=None, stretch=None, resize_factor=('3%', '3%'),
-              ct=None, scale=True, output_format="GTiff", gdal_path=None):
+              ct=None, scale=True, output_format="GTiff", gdal_path=None) -> Tuple[bool, str]:
     """
     Generates a quick-look image.
 
