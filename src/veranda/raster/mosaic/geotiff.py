@@ -1,7 +1,7 @@
 """ Raster data class managing I/O for multiple GeoTIFF files. """
 
 import os
-import secrets
+import uuid
 import tempfile
 import xarray as xr
 import numpy as np
@@ -596,7 +596,7 @@ class GeoTiffWriter(RasterDataWriter):
 
         """
 
-        self.write(self._data, apply_tiling, encoder, encoder_kwargs, overwrite, **kwargs)
+        self.write(self.data_view, apply_tiling, encoder, encoder_kwargs, overwrite, **kwargs)
 
 
 def read_vrt_stack(tile_id):
@@ -619,10 +619,9 @@ def read_vrt_stack(tile_id):
     file_register = global_file_register.loc[global_file_register['tile_id'] == tile_id]
 
     path = tempfile.gettempdir()
-    date_str = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-    token = secrets.token_hex(8)
-    tmp_filename = f"{date_str}_{token}.vrt"
-    vrt_filepath = os.path.join(path, tmp_filename)
+    vrt_filepath = os.path.join(path, f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex}.vrt")
+    while os.path.exists(vrt_filepath):
+        vrt_filepath = os.path.join(path, f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex}.vrt")
     filepaths = list(file_register['filepath'])
     create_vrt_file(filepaths, vrt_filepath, gt_access.src_shape, gt_access.src_wkt, gt_access.src_geotrans,
                     bands=bands)

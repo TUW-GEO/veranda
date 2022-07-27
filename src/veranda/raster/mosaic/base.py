@@ -620,8 +620,9 @@ class RasterData(metaclass=abc.ABCMeta):
         memo[id(self)] = result
         for k, v in self.__dict__.items():
             if k == '_files':  # skip existing file pointers, can't be copied
-                continue
-            setattr(result, k, copy.deepcopy(v, memo))
+                setattr(result, k, dict())
+            else:
+                setattr(result, k, copy.deepcopy(v, memo))
 
         result._file_register['file_id'] = None  # remove existing file IDs
         return result

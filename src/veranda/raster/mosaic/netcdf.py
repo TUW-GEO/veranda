@@ -700,8 +700,6 @@ class NetCdfWriter(RasterDataWriter):
         all_dims = list(data.dims)
         space_dims = all_dims[-2:]
         stack_dim_names = all_dims[:-2]
-        stack_dims = {stack_dim_name: None if stack_dim_name in unlimited_dims else len(data[stack_dim_name])
-                      for stack_dim_name in stack_dim_names}
         nodatavals, scale_factors, offsets, dtypes = self.__get_encoding_info_from_data(data, data_variables)
 
         for filepath, file_group in self._file_register.groupby('filepath'):
@@ -721,6 +719,8 @@ class NetCdfWriter(RasterDataWriter):
             file_coords = list(file_group[self._file_dim])
             data_write = data_write.sel(**{self._file_dim: file_coords})
             data_write = data_write[data_variables]
+            stack_dims = {stack_dim_name: None if stack_dim_name in unlimited_dims else len(data_write[stack_dim_name])
+                          for stack_dim_name in stack_dim_names}
 
             file_id = file_group.iloc[0].get('file_id', None)
             if file_id is None:
@@ -762,7 +762,7 @@ class NetCdfWriter(RasterDataWriter):
             Key-word arguments for creating a `NetCdf4File` instance.
 
         """
-        self.write(self._data, apply_tiling, encoder, encoder_kwargs, overwrite, unlimited_dims, **kwargs)
+        self.write(self.data_view, apply_tiling, encoder, encoder_kwargs, overwrite, unlimited_dims, **kwargs)
 
 
 if __name__ == '__main__':
