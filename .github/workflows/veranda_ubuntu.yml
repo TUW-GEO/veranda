@@ -53,6 +53,10 @@ jobs:
         with:
           name: os_py_environments
           path: .artifacts/*
+      - name: Set environment variables
+        shell: bash -l {0}
+        run: |
+          export GDAL_UTIL_HOME="/usr/share/miniconda3/envs/veranda/bin"
       - name: Install package and test
         shell: bash -l {0}
         run: |
