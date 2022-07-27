@@ -3,7 +3,7 @@ Installation
 ============
 
 The package can be either installed via pip or if you solely want to work with *veranda* or contribute, we recommend to
-install it as a conda environment. If you work already with your own environment, please have look at ``requirements.txt``.
+install it as a conda environment.
 
 pip
 ===

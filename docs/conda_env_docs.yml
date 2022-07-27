@@ -1,0 +1,18 @@
+name: veranda
+channels:
+    - conda-forge
+dependencies:
+    - python=3.8
+    - gdal
+    - geopandas
+    - cartopy
+    - numpy
+    - pyproj
+    - dask
+    - xarray
+    - netcdf4
+    - nbsphinx
+    - pip
+    - pip:
+          - geospade
+          - rioxarray

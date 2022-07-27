@@ -3,8 +3,15 @@ veranda
 =======
 
 *veranda* stands for *"vector and raster data access"* and is a place for IO related classes and operations dealing
-with vector and raster data. Currently, there is only one module `io`, which adds support for GeoTIFF (`geotiff`) and
-NetCDF (`netcdf`) files and their image stack representations (`timestack`).
+with raster and vector data. Besides bridging the gap between rigid and complex packages like GDAL to increase
+user-friendliness and flexibility (similar to *rasterio*) it defines common ground to unite the world of raster and
+vector data and harmonise the entry point to access different data formats or multiple files.
+
+*veranda* consist of two modules *raster* and *vector* each containing the submodules *native* and *mosaic*. *native*
+contains several classes for interacting with one file/data format, e.g. GeoTIFF or NetCDF. On the other hand, the
+*mosaic* module offers a datacube-like interface to work with multiple, structured files, which can be distributed based on a
+mosaic/grid in space or along a stack dimension, e.g. time, atmospheric layers, etc.
+
 
 
 Contents
@@ -14,6 +21,7 @@ Contents
    :maxdepth: 2
 
    Installation <install>
+   Mosaic <notebooks/mosaic>
    Module Reference <api/modules>
    License <license>
    Authors <authors>
