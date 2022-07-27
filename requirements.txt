@@ -1,7 +1,0 @@
-numpy
-pandas
-pyproj
-netCDF4
-xarray
-toolz
-dask

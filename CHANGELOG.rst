@@ -2,6 +2,13 @@
 Changelog
 =========
 
+Version 1.0.0
+=============
+- completely new package and module structure
+- implementation of I/O classes for single files
+- implementation of raster data classes for multiple files
+- support for GeoTIFF and NetCDF data
+
 Version 0.1.1
 =============
 - WARNING: this is an experimental release

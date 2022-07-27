@@ -7,20 +7,21 @@
 
 ## Description
 *veranda* stands for *"vector and raster data access"* and is a place for IO related classes and operations dealing 
-with vector and raster data. Currently, there is only one module `io`, which adds support for GeoTIFF (`geotiff`) and 
-NetCDF (`netcdf`) files and their image stack representations (`stack`).
+with raster and vector data. Besides bridging the gap between rigid and complex packages like GDAL to increase 
+user-friendliness and flexibility (similar to *rasterio*) it defines common ground to unite the world of raster and 
+vector data and harmonise the entry point to access different data formats or multiple files.
 
-## Limitations and Outlook
-Support for vector data is still missing, which could for instance include reading and writing Shape-Files or well-known 
-data formats like CSV for storing point-based *in-situ* data.
+*veranda* consist of two modules *raster* and *vector* each containing the submodules *native* and *mosaic*. *native* 
+contains several classes for interacting with one file/data format, e.g. GeoTIFF or NetCDF. On the other hand, the 
+*mosaic* module offers a datacube-like interface to work with multiple, structured files, which can be distributed based on a 
+mosaic/grid in space or along a stack dimension, e.g. time, atmospheric layers, etc.
 
-Performant data access is a key-feature for data cubes storing Earth Observation (EO) data. 
-The core-interface between higher-level data cubes (cf. *yeoda*) and the data stored on disk will be also
-implemented in *veranda*, allowing efficient and unambiguous writing and reading of EO data.
+For further details we recommend to look at *veranda*'s documentation or tests. 
+
 
 ## Installation
-The package can be either installed via pip or if you want to work solely with *veranda* or contribute, we recommend to 
-install it as a conda environment. If you work already with your own environment, please have look at ``requirements.txt``.
+The package can be either installed via pip or if you want to contribute, we recommend to 
+install it as a conda environment.
 
 ### pip
 To install *veranda* via pip in your own environment, use:
@@ -29,7 +30,7 @@ pip install veranda
 ```
 **ATTENTION**: GDAL needs more OS support and has more dependencies then other packages and can therefore not be installed solely via pip.
 Please have a look at https://pypi.org/project/GDAL/ what requirements are needed. Thus, for a fresh setup, an existing environment 
-with a Python and `gdal<=3.0.2`  installation are expected.
+with working a GDAL installation is expected.
 
 ### conda
 The packages also comes along with one conda environment ``conda_environment.yml``. 
@@ -64,7 +65,9 @@ python setup.py test
 ```
 to run the test suite.
 
+
 ## Contribution
+
 We are happy if you want to contribute. Please raise an issue explaining what
 is missing or if you find a bug. We will also gladly accept pull requests
 against our master branch for new features or bug fixes.
@@ -78,11 +81,13 @@ If you want to contribute please follow these steps:
     We use *py.test* so a simple function called ``test_my_feature`` is enough
   * Submit a pull request to our master branch
   
-## Citation
+## Outlook
+The next major release will contain significant support for vector data including IO for SHP and LASZ files.
+In addition the *raster* module will be extended to allow for accessing ZARR or HDF data for performant time series queries. 
 
+## Citation
 If you use this software in a publication then please cite it using the Zenodo DOI.
 
 ## Note
-
 This project has been set up using PyScaffold 3.2.2. For details and usage
 information on PyScaffold see https://pyscaffold.org/.
