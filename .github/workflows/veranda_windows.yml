@@ -46,5 +46,5 @@ jobs:
         shell: bash -l {0}
         run: |
           pip install .
-          export GDAL_UTIL_HOME="c:\miniconda3\envs\veranda\bin"
+          export GDAL_UTIL_HOME="C:\miniconda3\envs\veranda\bin"
           python setup.py test
