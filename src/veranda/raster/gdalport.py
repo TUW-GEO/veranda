@@ -182,7 +182,7 @@ def call_gdal_util(util_name, src_files, dst_file=None, options=None, gdal_path=
     # prepare the command string
     cmd = []
     gdal_cmd = os.path.join(gdal_path, util_name) if gdal_path else util_name
-    cmd.append(string2cli_arg(gdal_cmd))
+    cmd.append(gdal_cmd)
     cmd.extend(convert_gdal_options_to_command_list(options))
 
     # add source files and destination file (in double quotation)
