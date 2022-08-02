@@ -79,7 +79,8 @@ class RasterData(metaclass=abc.ABCMeta):
     geospatial files on disk.
 
     """
-    def __init__(self, file_register, mosaic, data=None, stack_dimension='layer_id', stack_coords=None, **kwargs):
+    def __init__(self, file_register, mosaic, data=None, stack_dimension='layer_id', stack_coords=None,
+                 tile_dimension='tile_id', **kwargs):
         """
         Constructor of `RasterData`.
 
@@ -89,10 +90,10 @@ class RasterData(metaclass=abc.ABCMeta):
             Data frame managing a stack/list of files containing the following columns:
                 - 'filepath' : str
                     Full file path to a geospatial file.
-                - 'layer_id' : object
+                - `stack_dimension` : object
                     Specifies an ID to which layer a file belongs to, e.g. a layer counter or a timestamp. Must
                     correspond to `stack_dimension`.
-                - 'tile_id' : str
+                - `tile_dimension` : str
                     Tile name or ID to which tile a file belongs to.
         mosaic : geospade.raster.MosaicGeometry
             Mosaic representing the spatial allocation of the given files. The tiles of the mosaic have to match the
@@ -108,6 +109,9 @@ class RasterData(metaclass=abc.ABCMeta):
         stack_coords : list, optional
             Additional columns of `file_register` to use as coordinates. Defaults to None, i.e. only coordinates along
             `stack_dimension` are used.
+        tile_dimension : str, optional
+            Dimension/column name of the dimension containing tile ID's in correspondence with the tiles in `mosaic`.
+            Defaults to 'tile_id'.
 
         """
         self._file_register = file_register
@@ -116,6 +120,7 @@ class RasterData(metaclass=abc.ABCMeta):
         self._data = data
         self._data_geom = None if data is None else self.raster_geom_from_data(data, sref=mosaic.sref, name='0')
         self._file_dim = stack_dimension
+        self._tile_dim = tile_dimension
         self._file_coords = [self._file_dim] if stack_coords is None else stack_coords
 
         if 'file_id' not in self._file_register.columns:
@@ -134,7 +139,7 @@ class RasterData(metaclass=abc.ABCMeta):
     @property
     def n_layers(self) -> int:
         """ Maximum number of layers. """
-        return self._file_register.groupby(["tile_id"])["tile_id"].count().max()
+        return self._file_register.groupby([self._tile_dim])[self._tile_dim].count().max()
 
     @property
     def n_tiles(self) -> int:
@@ -259,7 +264,7 @@ class RasterData(metaclass=abc.ABCMeta):
     def apply_nan(self):
         """
         Converts no data values given as an attribute '_FillValue' to np.nan. Note that this replacement implicitly
-        converts the mosaic format to float.
+        converts the data format to float.
 
         """
         if self._data is not None:
@@ -326,7 +331,7 @@ class RasterData(metaclass=abc.ABCMeta):
             new_raster_data = copy.deepcopy(self)
             return new_raster_data.select_tiles(tile_names, inplace=True)
 
-        self._file_register = self._file_register.loc[self._file_register['tile_id'].isin(tile_names)]
+        self._file_register = self._file_register.loc[self._file_register[self._tile_dim].isin(tile_names)]
         self._mosaic.select_by_tile_names(tile_names)
 
         return self
@@ -447,7 +452,7 @@ class RasterData(metaclass=abc.ABCMeta):
             tile_oi.slice_by_rc(row, col, inplace=True, name='0')
             tile_oi.active = True
             self._mosaic.from_tile_list([tile_oi], inplace=True)
-            self._file_register = self._file_register[self._file_register['tile_id'] == tile_oi.parent_root.name]
+            self._file_register = self._file_register[self._file_register[self._tile_dim] == tile_oi.parent_root.name]
         else:
             wrn_msg = "Coordinates are outside the spatial extent of the raster mosaic files."
             warnings.warn(wrn_msg)
@@ -525,7 +530,7 @@ class RasterData(metaclass=abc.ABCMeta):
 
         self._mosaic = sliced_mosaic
         tile_names_oi = [tile.parent_root.name for tile in self._mosaic.tiles]
-        self._file_register = self._file_register.loc[self._file_register['tile_id'].isin(tile_names_oi)]
+        self._file_register = self._file_register.loc[self._file_register[self._tile_dim].isin(tile_names_oi)]
 
         return self
 
@@ -639,7 +644,7 @@ class RasterData(metaclass=abc.ABCMeta):
 
 class RasterDataReader(RasterData):
     """ Allows to read and manage a stack of raster data. """
-    def __init__(self, file_register, mosaic, stack_dimension='layer_id', stack_coords=None):
+    def __init__(self, file_register, mosaic, stack_dimension='layer_id', stack_coords=None, tile_dimension='tile_id'):
         """
         Constructor of `RasterDataReader`.
 
@@ -649,23 +654,27 @@ class RasterDataReader(RasterData):
             Data frame managing a stack/list of files containing the following columns:
                 - 'filepath' : str
                     Full file path to a geospatial file.
-                - 'layer_id' : object
+                - `stack_dimension` : object
                     Specifies an ID to which layer a file belongs to, e.g. a layer counter or a timestamp. Must
                     correspond to `stack_dimension`.
-                - 'tile_id' : str
+                - `tile_dimension` : str
                     Tile name or ID to which tile a file belongs to.
         mosaic : geospade.raster.MosaicGeometry
             Mosaic representing the spatial allocation of the given files. The tiles of the mosaic have to match the
-            ID's/names of the 'tile_id' column.
+            ID's/names of the `tile_dimension` column.
         stack_dimension : str, optional
             Dimension/column name of the dimension, where to stack the files along (first axis), e.g. time, bands etc.
             Defaults to 'layer_id', i.e. the layer ID's are used as the main coordinates to stack the files.
         stack_coords : list, optional
             Additional columns of `file_register` to use as coordinates. Defaults to None, i.e. only coordinates along
             `stack_dimension` are used.
+        tile_dimension : str, optional
+            Dimension/column name of the dimension containing tile ID's in correspondence with the tiles in `mosaic`.
+            Defaults to 'tile_id'.
 
         """
-        super().__init__(file_register, mosaic, stack_dimension=stack_dimension, stack_coords=stack_coords)
+        super().__init__(file_register, mosaic, stack_dimension=stack_dimension, stack_coords=stack_coords,
+                         tile_dimension=tile_dimension)
 
     @abc.abstractmethod
     def read(self, *args, auto_decode=False, decoder=None, decoder_kwargs=None, **kwargs):
@@ -765,7 +774,7 @@ class RasterDataReader(RasterData):
 class RasterDataWriter(RasterData):
     """ Allows to write and manage a stack of raster data. """
     def __init__(self, mosaic, file_register=None, data=None, stack_dimension='layer_id', stack_coords=None,
-                 dirpath=None, fn_pattern='{layer_id}.xyz', fn_formatter=None):
+                 tile_dimension='tile_id', dirpath=None, fn_pattern='{layer_id}.xyz', fn_formatter=None):
         """
         Constructor of `RasterDataWriter`.
 
@@ -774,15 +783,15 @@ class RasterDataWriter(RasterData):
 
         mosaic : geospade.raster.MosaicGeometry
             Mosaic representing the spatial allocation of the given files. The tiles of the mosaic have to match the
-            ID's/names of the 'tile_id' column.
+            ID's/names of the `tile_dimension` column.
         file_register : pd.Dataframe, optional
             Data frame managing a stack/list of files containing the following columns:
                 - 'filepath' : str
                     Full file path to a geospatial file.
-                - 'layer_id' : object
+                - `stack_dimension` : object
                     Specifies an ID to which layer a file belongs to, e.g. a layer counter or a timestamp. Must
                     correspond to `stack_dimension`.
-                - 'tile_id' : str
+                - `tile_dimension` : str
                     Tile name or ID to which tile a file belongs to.
             If it is None, then the constructor tries to create a file from other keyword arguments, i.e. `data`,
             `dirpath`, `fn_pattern`, and `fn_formatter`.
@@ -796,6 +805,9 @@ class RasterDataWriter(RasterData):
         stack_coords : list, optional
             Additional columns of `file_register` to use as coordinates. Defaults to None, i.e. only coordinates along
             `stack_dimension` are used.
+        tile_dimension : str, optional
+            Dimension/column name of the dimension containing tile ID's in correspondence with the tiles in `mosaic`.
+            Defaults to 'tile_id'.
         dirpath : str, optional
             Directory path to the folder where the GeoTIFF files should be written to. Defaults to None, i.e. the
             current working directory is used.
@@ -814,8 +826,8 @@ class RasterDataWriter(RasterData):
         elif file_register is None and data is not None:
             file_register = RasterDataWriter._file_register_from_data(data, stack_dimension)
 
-        if 'tile_id' not in file_register.columns:
-            file_register = RasterDataWriter._add_tile_names_to_file_register(file_register, mosaic)
+        if tile_dimension not in file_register.columns:
+            file_register = RasterDataWriter._add_tile_names_to_file_register(file_register, mosaic, tile_dimension)
 
         if stack_dimension not in file_register.columns:
             file_register = RasterDataWriter._add_stack_dims_to_file_register(file_register, stack_dimension, data)
@@ -878,14 +890,14 @@ class RasterDataWriter(RasterData):
             Data frame managing a stack/list of files containing the following columns:
                 - 'filepath' : str
                     Full file path to a geospatial file.
-                - 'layer_id' : object
+                - `stack_dimension` : object
                     Specifies an ID to which layer a file belongs to, e.g. a layer counter or a timestamp. Must
                     correspond to `stack_dimension`.
-                - 'tile_id' : str
+                - `tile_dimension` : str
                     Tile name or ID to which tile a file belongs to.
         mosaic : geospade.raster.MosaicGeometry, optional
             Mosaic representing the spatial allocation of the given files. The tiles of the mosaic have to match the
-            ID's/names of the 'tile_id' column. If it is None, a one-tile mosaic will be created from the given
+            ID's/names of the `tile_dimension` column. If it is None, a one-tile mosaic will be created from the given
             data.
         kwargs :
             Key-word arguments for the `RasterDataWriter` constructor.
@@ -933,9 +945,9 @@ class RasterDataWriter(RasterData):
         return pd.DataFrame(file_register_dict)
 
     @staticmethod
-    def _add_tile_names_to_file_register(file_register, mosaic) -> pd.DataFrame:
+    def _add_tile_names_to_file_register(file_register, mosaic, tile_dimension='tile_id') -> pd.DataFrame:
         """
-        Adds all tiles of a mosaic to the given file register under the column 'tile_id'.
+        Adds all tiles of a mosaic to the given file register under the column `tile_dimension`.
 
         Parameters
         ----------
@@ -943,6 +955,9 @@ class RasterDataWriter(RasterData):
             File register to add the tile names to.
         mosaic : MosaicGeometry
             Mosaic to extract tile information from.
+        tile_dimension : str, optional
+            Dimension/column name of the dimension containing tile ID's in correspondence with the tiles in `mosaic`.
+            Defaults to 'tile_id'.
 
         Returns
         -------
@@ -955,7 +970,7 @@ class RasterDataWriter(RasterData):
         n_tiles = len(tile_names)
         file_register = pd.DataFrame(np.repeat(file_register.values, n_tiles, axis=0),
                                      columns=file_register.columns)
-        file_register['tile_id'] = np.repeat([tile_names], n_entries, axis=0).flatten()
+        file_register[tile_dimension] = np.repeat([tile_names], n_entries, axis=0).flatten()
 
         return file_register
 

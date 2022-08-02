@@ -519,7 +519,8 @@ class GeoTiffWriter(RasterDataWriter):
 
         return nodatavals, scale_factors, offsets, dtypes
 
-    def write(self, data, apply_tiling=False, encoder=None, encoder_kwargs=None, overwrite=False, **kwargs):
+    def write(self, data, apply_tiling=False, data_variables=None, encoder=None, encoder_kwargs=None, overwrite=False,
+              **kwargs):
         """
         Writes a certain chunk of data to disk.
 
@@ -530,6 +531,8 @@ class GeoTiffWriter(RasterDataWriter):
         apply_tiling : bool, optional
             True if data should be tiled according to the mosaic.
             False if data composes a new tile and should not be tiled (default).
+        data_variables : list of str, optional
+            Data variables to write. Defaults to None, i.e. all data variables are written.
         encoder : callable, optional
             Function allowing to encode data before writing it to disk.
         encoder_kwargs : dict, optional
@@ -539,16 +542,16 @@ class GeoTiffWriter(RasterDataWriter):
 
         """
         data_geom = self.raster_geom_from_data(data, sref=self.mosaic.sref)
-
-        band_names = list(data.data_vars)
+        data_write = data if data_variables is None else data[data_variables]
+        band_names = list(data_write.data_vars)
         n_bands = len(band_names)
-        nodatavals, scale_factors, offsets, dtypes = self.__get_encoding_info_from_data(data, band_names)
+        nodatavals, scale_factors, offsets, dtypes = self.__get_encoding_info_from_data(data_write, band_names)
 
         for filepath, file_group in self._file_register.groupby('filepath'):
             tile_id = file_group.iloc[0].get('tile_id', '0')
 
             file_coords = list(file_group[self._file_dim])
-            xrds = data.sel(**{self._file_dim: file_coords})
+            xrds = data_write.sel(**{self._file_dim: file_coords})
             data_write = xrds[band_names].to_array().data
 
             if apply_tiling:
@@ -578,7 +581,8 @@ class GeoTiffWriter(RasterDataWriter):
                           row=gt_access.dst_window[0], col=gt_access.dst_window[1],
                           encoder=encoder, encoder_kwargs=encoder_kwargs)
 
-    def export(self, apply_tiling=False, encoder=None, encoder_kwargs=None, overwrite=False, **kwargs):
+    def export(self, apply_tiling=False, data_variables=None, encoder=None, encoder_kwargs=None, overwrite=False,
+               **kwargs):
         """
         Writes all internally stored data to disk.
 
@@ -587,6 +591,8 @@ class GeoTiffWriter(RasterDataWriter):
         apply_tiling : bool, optional
             True if the internal data should be tiled according to the mosaic.
             False if the internal data composes a new tile and should not be tiled (default).
+        data_variables : list of str, optional
+            Data variables to write. Defaults to None, i.e. all data variables are written.
         encoder : callable, optional
             Function allowing to encode data before writing it to disk.
         encoder_kwargs : dict, optional
@@ -596,7 +602,7 @@ class GeoTiffWriter(RasterDataWriter):
 
         """
 
-        self.write(self.data_view, apply_tiling, encoder, encoder_kwargs, overwrite, **kwargs)
+        self.write(self.data_view, apply_tiling, data_variables, encoder, encoder_kwargs, overwrite, **kwargs)
 
 
 def read_vrt_stack(tile_id):

@@ -670,8 +670,8 @@ class NetCdfWriter(RasterDataWriter):
 
         return nodatavals, scale_factors, offsets, dtypes
 
-    def write(self, data, apply_tiling=False, encoder=None, encoder_kwargs=None, overwrite=False, unlimited_dims=None,
-              **kwargs):
+    def write(self, data, apply_tiling=False, data_variables=None, encoder=None, encoder_kwargs=None, overwrite=False,
+              unlimited_dims=None, **kwargs):
         """
         Writes a certain chunk of NetCDF data to disk.
 
@@ -682,6 +682,8 @@ class NetCdfWriter(RasterDataWriter):
         apply_tiling : bool, optional
             True if data should be tiled according to the mosaic.
             False if data composes a new tile and should not be tiled (default).
+        data_variables : list of str, optional
+            Data variables to write. Defaults to None, i.e. all data variables are written.
         encoder : callable, optional
             Function allowing to encode a xarray dataset before writing it to disk.
         encoder_kwargs : dict, optional
@@ -696,8 +698,9 @@ class NetCdfWriter(RasterDataWriter):
         """
         data_geom = self.raster_geom_from_data(data, sref=self.mosaic.sref)
         unlimited_dims = to_list(unlimited_dims)
-        data_variables = list(data.data_vars)
-        all_dims = list(data.dims)
+        data_write = data if data_variables is None else data[data_variables]
+        data_variables = list(data_write.data_vars)
+        all_dims = list(data_write.dims)
         space_dims = all_dims[-2:]
         stack_dim_names = all_dims[:-2]
         nodatavals, scale_factors, offsets, dtypes = self.__get_encoding_info_from_data(data, data_variables)
@@ -710,11 +713,10 @@ class NetCdfWriter(RasterDataWriter):
                 if not src_tile.intersects(data_geom):
                     continue
                 dst_tile = data_geom.slice_by_geom(src_tile, inplace=False)
-                data_write = data.sel(**{space_dims[0]: dst_tile.y_coords, space_dims[1]: dst_tile.x_coords})
+                data_write = data_write.sel(**{space_dims[0]: dst_tile.y_coords, space_dims[1]: dst_tile.x_coords})
             else:
                 dst_tile = data_geom
                 src_tile = data_geom
-                data_write = data
 
             file_coords = list(file_group[self._file_dim])
             data_write = data_write.sel(**{self._file_dim: file_coords})
@@ -750,6 +752,8 @@ class NetCdfWriter(RasterDataWriter):
         apply_tiling : bool, optional
             True if the internal data should be tiled according to the mosaic.
             False if the internal data composes a new tile and should not be tiled (default).
+        data_variables : list of str, optional
+            Data variables to write. Defaults to None, i.e. all data variables are written.
         encoder : callable, optional
             Function allowing to encode an xarray dataset before writing it to disk.
         encoder_kwargs : dict, optional
@@ -762,7 +766,8 @@ class NetCdfWriter(RasterDataWriter):
             Key-word arguments for creating a `NetCdf4File` instance.
 
         """
-        self.write(self.data_view, apply_tiling, encoder, encoder_kwargs, overwrite, unlimited_dims, **kwargs)
+        self.write(self.data_view, apply_tiling, data_variables, encoder, encoder_kwargs, overwrite, unlimited_dims,
+                   **kwargs)
 
 
 if __name__ == '__main__':
