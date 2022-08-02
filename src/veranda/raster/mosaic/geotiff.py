@@ -76,7 +76,8 @@ class GeoTiffAccess(RasterAccess):
 
 class GeoTiffReader(RasterDataReader):
     """ Allows to read and manage a stack of GeoTIFF data. """
-    def __init__(self, file_register, mosaic, stack_dimension='layer_id', stack_coords=None, space_dims=None):
+    def __init__(self, file_register, mosaic, stack_dimension='layer_id', stack_coords=None, tile_dimension='tile_id',
+                 space_dims=None):
         """
         Constructor of `GeoTiffReader`.
 
@@ -100,11 +101,15 @@ class GeoTiffReader(RasterDataReader):
         stack_coords : list, optional
             Additional columns of `file_register` to use as coordinates. Defaults to None, i.e. only coordinates along
             `stack_dimension` are used.
+        tile_dimension : str, optional
+            Dimension/column name of the dimension containing tile ID's in correspondence with the tiles in `mosaic`.
+            Defaults to 'tile_id'.
         space_dims : list, optional
             Dictionary containing the spatial dimension names. By default it is set to ['y', 'x'].
 
         """
-        super().__init__(file_register, mosaic, stack_dimension=stack_dimension, stack_coords=stack_coords)
+        super().__init__(file_register, mosaic, stack_dimension=stack_dimension, stack_coords=stack_coords,
+                         tile_dimension=tile_dimension)
 
         ref_filepath = self._file_register['filepath'].iloc[0]
         with GeoTiffFile(ref_filepath, 'r') as gt_file:
@@ -439,7 +444,7 @@ class GeoTiffReader(RasterDataReader):
 class GeoTiffWriter(RasterDataWriter):
     """ Allows to write and manage a stack of GeoTIFF files. """
     def __init__(self, mosaic, file_register=None, data=None, stack_dimension='layer_id', stack_coords=None,
-                 dirpath=None, fn_pattern='{layer_id}.tif', fn_formatter=None):
+                 tile_dimension='tile_id', dirpath=None, fn_pattern='{layer_id}.tif', fn_formatter=None):
         """
         Constructor of `GeoTiffWriter`.
 
@@ -469,6 +474,9 @@ class GeoTiffWriter(RasterDataWriter):
         stack_coords : list, optional
             Additional columns of `file_register` to use as coordinates. Defaults to None, i.e. only coordinates along
             `stack_dimension` are used.
+        tile_dimension : str, optional
+            Dimension/column name of the dimension containing tile ID's in correspondence with the tiles in `mosaic`.
+            Defaults to 'tile_id'.
         dirpath : str, optional
             Directory path to the folder where the GeoTIFF files should be written to. Defaults to None, i.e. the
             current working directory is used.
@@ -482,7 +490,8 @@ class GeoTiffWriter(RasterDataWriter):
         """
 
         super().__init__(mosaic, file_register=file_register, data=data, stack_dimension=stack_dimension,
-                         stack_coords=stack_coords, dirpath=dirpath, fn_pattern=fn_pattern, fn_formatter=fn_formatter)
+                         stack_coords=stack_coords, tile_dimension=tile_dimension, dirpath=dirpath,
+                         fn_pattern=fn_pattern, fn_formatter=fn_formatter)
 
     def __get_encoding_info_from_data(self, data, band_names) -> Tuple[dict, dict, dict, dict]:
         """

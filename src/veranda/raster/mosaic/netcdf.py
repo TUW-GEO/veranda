@@ -18,7 +18,7 @@ from veranda.raster.mosaic.base import RasterDataReader, RasterDataWriter, Raste
 
 class NetCdfReader(RasterDataReader):
     """ Allows to read and manage a stack of NetCDF files. """
-    def __init__(self, file_register, mosaic, stack_dimension='layer_id', stack_coords=None):
+    def __init__(self, file_register, mosaic, stack_dimension='layer_id', stack_coords=None, tile_dimension='tile_id'):
         """
         Constructor of `NetCdfReader`.
 
@@ -42,9 +42,13 @@ class NetCdfReader(RasterDataReader):
         stack_coords : list, optional
             Additional columns of `file_register` to use as coordinates. Defaults to None, i.e. only coordinates along
             `stack_dimension` are used.
+        tile_dimension : str, optional
+            Dimension/column name of the dimension containing tile ID's in correspondence with the tiles in `mosaic`.
+            Defaults to 'tile_id'.
 
         """
-        super().__init__(file_register, mosaic, stack_dimension=stack_dimension, stack_coords=stack_coords)
+        super().__init__(file_register, mosaic, stack_dimension=stack_dimension, stack_coords=stack_coords,
+                         tile_dimension=tile_dimension)
 
         ref_filepath = self._file_register['filepath'].iloc[0]
         with NetCdf4File(ref_filepath, 'r') as nc_file:
@@ -560,7 +564,7 @@ class NetCdfReader(RasterDataReader):
 class NetCdfWriter(RasterDataWriter):
     """ Allows to write and manage a stack of NetCDF files. """
     def __init__(self, mosaic, file_register=None, data=None, stack_dimension='layer_id', stack_coords=None,
-                 dirpath=None, fn_pattern='{layer_id}.tif', fn_formatter=None):
+                 tile_dimension='tile_id', dirpath=None, fn_pattern='{layer_id}.tif', fn_formatter=None):
         """
         Constructor of `NetCdfWriter`.
 
@@ -590,6 +594,9 @@ class NetCdfWriter(RasterDataWriter):
         stack_coords : list, optional
             Additional columns of `file_register` to use as coordinates. Defaults to None, i.e. only coordinates along
             `stack_dimension` are used.
+        tile_dimension : str, optional
+            Dimension/column name of the dimension containing tile ID's in correspondence with the tiles in `mosaic`.
+            Defaults to 'tile_id'.
         dirpath : str, optional
             Directory path to the folder where the NetCDF files should be written to. Defaults to None, i.e. the
             current working directory is used.
@@ -603,7 +610,8 @@ class NetCdfWriter(RasterDataWriter):
         """
 
         super().__init__(mosaic, file_register=file_register, data=data, stack_dimension=stack_dimension,
-                         stack_coords=stack_coords, dirpath=dirpath, fn_pattern=fn_pattern, fn_formatter=fn_formatter)
+                         stack_coords=stack_coords, tile_dimension=tile_dimension, dirpath=dirpath,
+                         fn_pattern=fn_pattern, fn_formatter=fn_formatter)
 
     @classmethod
     def from_data(self, data, filepath, mosaic=None, **kwargs) -> "NetCdfWriter":
