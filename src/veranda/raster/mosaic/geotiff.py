@@ -551,8 +551,8 @@ class GeoTiffWriter(RasterDataWriter):
 
         """
         data_geom = self.raster_geom_from_data(data, sref=self.mosaic.sref)
-        data_write = data if data_variables is None else data[data_variables]
-        band_names = list(data_write.data_vars)
+        data_filt = data if data_variables is None else data[data_variables]
+        band_names = list(data_filt.data_vars)
         n_bands = len(band_names)
         nodatavals, scale_factors, offsets, dtypes = self.__get_encoding_info_from_data(data_write, band_names)
 
@@ -560,7 +560,7 @@ class GeoTiffWriter(RasterDataWriter):
             tile_id = file_group.iloc[0].get('tile_id', '0')
 
             file_coords = list(file_group[self._file_dim])
-            xrds = data_write.sel(**{self._file_dim: file_coords})
+            xrds = data_filt.sel(**{self._file_dim: file_coords})
             data_write = xrds[band_names].to_array().data
 
             if apply_tiling:
