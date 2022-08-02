@@ -554,7 +554,7 @@ class GeoTiffWriter(RasterDataWriter):
         data_filt = data if data_variables is None else data[data_variables]
         band_names = list(data_filt.data_vars)
         n_bands = len(band_names)
-        nodatavals, scale_factors, offsets, dtypes = self.__get_encoding_info_from_data(data_write, band_names)
+        nodatavals, scale_factors, offsets, dtypes = self.__get_encoding_info_from_data(data_filt, band_names)
 
         for filepath, file_group in self._file_register.groupby('filepath'):
             tile_id = file_group.iloc[0].get('tile_id', '0')
