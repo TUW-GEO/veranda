@@ -951,9 +951,9 @@ class NetCdfXrFile:
         self._engine = engine
         self.nc_format = nc_format
         self.auto_decode = auto_decode
-        self._stack_dims = stack_dims or {'time': None}
-        self._space_dims = space_dims or ['y', 'x']
-        if len(self._space_dims) != 2:
+        self.stack_dims = stack_dims or {'time': None}
+        self.space_dims = space_dims or ['y', 'x']
+        if len(self.space_dims) != 2:
             err_msg = "The number of spatial dimensions must equal 2."
             raise ValueError(err_msg)
         self.attrs = attrs or dict()
@@ -973,12 +973,12 @@ class NetCdfXrFile:
     @property
     def all_variables(self):
         """ Returns all relevant (data, spatial and stack) variables of the xarray dataset. """
-        return self.data_variables + list(self._stack_dims.keys()) + self._space_dims
+        return self.data_variables + list(self.stack_dims.keys()) + self.space_dims
 
     @property
     def raster_shape(self) -> Tuple[int, int]:
         """ 2-tuple: Tuple specifying the raster_shape of the raster (defined by the spatial dimensions). """
-        return len(self.src[self._space_dims[0]]), len(self.src[self._space_dims[1]])
+        return len(self.src[self.space_dims[0]]), len(self.src[self.space_dims[1]])
 
     def _open(self, ds=None):
         """
@@ -1001,11 +1001,11 @@ class NetCdfXrFile:
 
     def _reset(self):
         """ Resets internal class variables with properties from an existing NetCDF dataset. """
-        stack_dims = list(set(self.src.dims.keys()) - set(self._space_dims))
+        stack_dims = list(set(self.src.dims.keys()) - set(self.space_dims))
         if self.mode == 'r':
-            self._stack_dims = {stack_dim: len(self.src[stack_dim]) for stack_dim in stack_dims}
+            self.stack_dims = {stack_dim: len(self.src[stack_dim]) for stack_dim in stack_dims}
 
-        dims = stack_dims + self._space_dims
+        dims = stack_dims + self.space_dims
         if len(self.data_variables) == 0:
             self.data_variables = [self.src[dvar].name for dvar in self.src.data_vars
                                    if list(self.src[dvar].dims) == dims]
@@ -1047,10 +1047,10 @@ class NetCdfXrFile:
         self.src.attrs.update(self.metadata)
         self._reset()
         n_rows, n_cols = self.raster_shape
-        ds[self._space_dims[0]] = self.geotrans[3] + \
+        ds[self.space_dims[0]] = self.geotrans[3] + \
                                   (0.5 + np.arange(n_rows)) * self.geotrans[4] + \
                                   (0.5 + np.arange(n_rows)) * self.geotrans[5]
-        ds[self._space_dims[1]] = self.geotrans[0] + \
+        ds[self.space_dims[1]] = self.geotrans[0] + \
                                   (0.5 + np.arange(n_cols)) * self.geotrans[1] + \
                                   (0.5 + np.arange(n_cols)) * self.geotrans[2]
 
@@ -1127,9 +1127,9 @@ class NetCdfXrFile:
         data_sliced = self.src[data_variable][..., row: row + n_rows, col: col + n_cols]
         ref_chunksize = self._chunksizes[data_variable]
         if ref_chunksize is not None:
-            chunks = {stack_dim: ref_chunksize[i] for i, stack_dim in enumerate(self._stack_dims.keys())}
-            chunks[self._space_dims[0]] = ref_chunksize[-2]
-            chunks[self._space_dims[1]] = ref_chunksize[-1]
+            chunks = {stack_dim: ref_chunksize[i] for i, stack_dim in enumerate(self.stack_dims.keys())}
+            chunks[self.space_dims[0]] = ref_chunksize[-2]
+            chunks[self.space_dims[1]] = ref_chunksize[-1]
             data_sliced = data_sliced.chunk(chunks)
         if decoder:
             data_sliced = decoder(data_sliced,
@@ -1166,7 +1166,7 @@ class NetCdfXrFile:
         data_variables = data_variables or self.data_variables
         encoder_kwargs = encoder_kwargs or dict()
         ds_write = self.src
-        unlimited_dims = [k for k, v in self._stack_dims.items() if v is None]
+        unlimited_dims = [k for k, v in self.stack_dims.items() if v is None]
         encoding = {data_variable: self._encode_data_variable(ds_write, data_variable, encoder, encoder_kwargs)
                     for data_variable in data_variables}
 
@@ -1294,7 +1294,7 @@ class NetCdfXrFile:
             Dictionary mapping NetCDF variables with the value of `arg`.
 
         """
-        all_variables = self.data_variables + list(self._stack_dims.keys()) + self._space_dims
+        all_variables = self.data_variables + list(self.stack_dims.keys()) + self.space_dims
         if not isinstance(arg, dict) or (isinstance(arg, dict) and not isinstance(arg[list(arg.keys())[0]], dict)):
             arg_dict = dict()
             for data_variable in all_variables:

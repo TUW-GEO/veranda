@@ -18,7 +18,8 @@ from veranda.raster.mosaic.base import RasterDataReader, RasterDataWriter, Raste
 
 class NetCdfReader(RasterDataReader):
     """ Allows to read and manage a stack of NetCDF files. """
-    def __init__(self, file_register, mosaic, stack_dimension='layer_id', stack_coords=None, tile_dimension='tile_id'):
+    def __init__(self, file_register, mosaic, stack_dimension='layer_id', stack_coords=None, tile_dimension='tile_id',
+                 file_class=NetCdf4File, file_class_kwargs=None):
         """
         Constructor of `NetCdfReader`.
 
@@ -45,25 +46,34 @@ class NetCdfReader(RasterDataReader):
         tile_dimension : str, optional
             Dimension/column name of the dimension containing tile ID's in correspondence with the tiles in `mosaic`.
             Defaults to 'tile_id'.
+        file_class : class, optional
+            Class to use for opening files. Defaults to `NetCdf4File`.
+        file_class_kwargs : dict, optional
+            Keyword arguments for calling `file_class`. Defaults to none.
 
         """
         super().__init__(file_register, mosaic, stack_dimension=stack_dimension, stack_coords=stack_coords,
                          tile_dimension=tile_dimension)
 
+        file_class_kwargs = file_class_kwargs or dict()
         ref_filepath = self._file_register['filepath'].iloc[0]
-        with NetCdf4File(ref_filepath, 'r') as nc_file:
+        with file_class(ref_filepath, 'r', **file_class_kwargs) as nc_file:
             self._ref_data_variables = nc_file.data_variables
             self._ref_nodatavals = nc_file.nodatavals
             self._ref_scale_factors = nc_file.nodatavals
             self._ref_offsets = nc_file.offsets
             self._ref_dtypes = nc_file.dtypes
             self._ref_metadata = nc_file.metadata
-            self._ref_space_dims = nc_file.space_dims
-            self._ref_stack_dims = nc_file.stack_dims
+            space_dims = nc_file.space_dims
+            stack_dims = nc_file.stack_dims
+            self._ref_space_dims = list(space_dims.keys()) if isinstance(space_dims, dict) else space_dims
+            self._ref_stack_dims = list(stack_dims.keys()) if isinstance(stack_dims, dict) else stack_dims
 
     @classmethod
     def from_filepaths(cls, filepaths, mosaic_class=MosaicGeometry, mosaic_kwargs=None, tile_kwargs=None,
-                       stack_dimension='layer_id', **kwargs) -> "NetCdfReader":
+                       stack_dimension='layer_id', tile_dimension='tile_id',
+                       file_class=NetCdf4File, file_class_kwargs=None,
+                       **kwargs) -> "NetCdfReader":
         """
         Creates a `NetCdfReader` instance as one stack of NetCDF files.
 
@@ -81,6 +91,13 @@ class NetCdfReader(RasterDataReader):
         stack_dimension : str, optional
             Dimension/column name of the dimension, where to stack the files along (first axis), e.g. time, bands etc.
             Defaults to 'layer_id', i.e. the layer ID's are used as the main coordinates to stack the files.
+        tile_dimension : str, optional
+            Dimension/column name of the dimension containing tile ID's in correspondence with the tiles in `mosaic`.
+            Defaults to 'tile_id'.
+        file_class : class, optional
+            Class to use for opening files. Defaults to `NetCdf4File`.
+        file_class_kwargs : dict, optional
+            Keyword arguments for calling `file_class`. Defaults to none.
         kwargs : dict, optional
             Key-word arguments for the `NetCdfReader` constructor.
 
@@ -91,16 +108,17 @@ class NetCdfReader(RasterDataReader):
         """
         mosaic_kwargs = mosaic_kwargs or dict()
         tile_kwargs = tile_kwargs or dict()
+        file_class_kwargs = file_class_kwargs or dict()
 
         n_filepaths = len(filepaths)
         file_register_dict = dict()
         file_register_dict['filepath'] = filepaths
-        file_register_dict['tile_id'] = ['0'] * n_filepaths
+        file_register_dict[tile_dimension] = ['0'] * n_filepaths
         file_register_dict[stack_dimension] = list(range(n_filepaths))
         file_register = pd.DataFrame(file_register_dict)
 
         ref_filepath = filepaths[0]
-        with NetCdf4File(ref_filepath, 'r') as nc_file:
+        with file_class(ref_filepath, 'r', **file_class_kwargs) as nc_file:
             sref_wkt = nc_file.sref_wkt
             geotrans = nc_file.geotrans
             n_rows, n_cols = nc_file.raster_shape
@@ -109,11 +127,13 @@ class NetCdfReader(RasterDataReader):
         tile = tile_class(n_rows, n_cols, sref=SpatialRef(sref_wkt), geotrans=geotrans, name='0', **tile_kwargs)
         mosaic_geom = mosaic_class.from_tile_list([tile], check_consistency=False, **mosaic_kwargs)
 
-        return cls(file_register, mosaic_geom, stack_dimension=stack_dimension, **kwargs)
+        return cls(file_register, mosaic_geom, stack_dimension=stack_dimension, tile_dimension=tile_dimension,
+                   **kwargs)
 
     @classmethod
     def from_mosaic_filepaths(cls, filepaths, mosaic_class=MosaicGeometry, mosaic_kwargs=None,
-                              stack_dimension='layer_id', **kwargs) -> "NetCdfReader":
+                              stack_dimension='layer_id', tile_dimension='tile_id',
+                              file_class=NetCdf4File, file_class_kwargs=None, **kwargs) -> "NetCdfReader":
         """
         Creates a `NetCdfReader` instance as multiple stacks of NetCDF files.
 
@@ -129,6 +149,13 @@ class NetCdfReader(RasterDataReader):
         stack_dimension : str, optional
             Dimension/column name of the dimension, where to stack the files along (first axis), e.g. time, bands etc.
             Defaults to 'layer_id', i.e. the layer ID's are used as the main coordinates to stack the files.
+        tile_dimension : str, optional
+            Dimension/column name of the dimension containing tile ID's in correspondence with the tiles in `mosaic`.
+            Defaults to 'tile_id'.
+        file_class : class, optional
+            Class to use for opening files. Defaults to `NetCdf4File`.
+        file_class_kwargs : dict, optional
+            Keyword arguments for calling `file_class`. Defaults to none.
         kwargs : dict, optional
             Key-word arguments for the `NetCdfReader` constructor.
 
@@ -138,19 +165,22 @@ class NetCdfReader(RasterDataReader):
 
         """
         mosaic_kwargs = mosaic_kwargs or dict()
+        file_class_kwargs = file_class_kwargs or dict()
         file_register_dict = dict()
         file_register_dict['filepath'] = filepaths
         tile_class = mosaic_class.get_tile_class()
         tiles, tile_ids, layer_ids = RasterDataReader._create_tile_and_layer_info_from_files(filepaths, tile_class,
-                                                                                             NetCdf4File)
+                                                                                             file_class,
+                                                                                             file_class_kwargs)
 
-        file_register_dict['tile_id'] = tile_ids
+        file_register_dict[tile_dimension] = tile_ids
         file_register_dict[stack_dimension] = layer_ids
         file_register = pd.DataFrame(file_register_dict)
 
         mosaic_geom = mosaic_class.from_tile_list(tiles, check_consistency=False, **mosaic_kwargs)
 
-        return cls(file_register, mosaic_geom, stack_dimension=stack_dimension, **kwargs)
+        return cls(file_register, mosaic_geom, stack_dimension=stack_dimension, tile_dimension=tile_dimension,
+                   **kwargs)
 
     def read(self, data_variables=None, engine='netcdf4', agg_dim='time', parallel=True, compute=True, auto_decode=False,
              decoder=None, decoder_kwargs=None, **kwargs) -> "NetCdfReader":
@@ -271,7 +301,7 @@ class NetCdfReader(RasterDataReader):
 
         return xr.combine_by_coords(data)
 
-    def __post_proc_data_netcdf4(self, ar, tile, nodataval=0) -> xr.DataArray:
+    def __post_proc_data_netcdf4(self, ar, dw_tile, dm_tile, nodataval=0) -> xr.DataArray:
         """
         Masks the given array.
 
@@ -279,7 +309,9 @@ class NetCdfReader(RasterDataReader):
         ----------
         ar : np.ndarray or xr.DataArray
             Array to mask.
-        tile : Tile
+        dw_tile : Tile
+            Tile representing the data window to read from.
+        dm_tile : Tile
             Tile to extract a data mask from.
         nodataval : float, optional
             No data value being assigned where the mask values evaluate to false (defaults to 0).
@@ -290,11 +322,15 @@ class NetCdfReader(RasterDataReader):
             Masked array.
 
         """
-        if tile.mask is not None:
-            ar[:, ~tile.mask.astype(bool)] = nodataval
+        if dm_tile.mask is not None:
+            raster_access = RasterAccess(dm_tile, dw_tile, src_root_raster_geom=dw_tile)
+            tile_mask = np.zeros(dw_tile.shape)
+            tile_mask[raster_access.src_row_slice, raster_access.src_col_slice] = dm_tile.mask
+            ar[:, ~tile_mask.astype(bool)] = nodataval
+
         return ar
 
-    def __load_data_per_data_variable_netcdf4(self, ds, data_variable, tile, raster_access,
+    def __load_data_per_data_variable_netcdf4(self, ds, data_variable, dw_tile, dm_tile, raster_access,
                                               decoder=None, decoder_kwargs=None) -> xr.DataArray:
         """
         Selects, mask and slices a netCDF4 data variable.
@@ -305,7 +341,9 @@ class NetCdfReader(RasterDataReader):
             Dataset to subset.
         data_variable : str
             Data variable to select.
-        tile : Tile
+        dw_tile : Tile
+            Tile representing the data window to read from.
+        dm_tile : Tile
             Tile to extract a data mask from.
         raster_access : RasterAccess
             Helper instance to slice the data array.
@@ -322,7 +360,7 @@ class NetCdfReader(RasterDataReader):
         """
         dar = self.__load_data_per_data_variable(ds, data_variable, raster_access,
                                                  decoder, decoder_kwargs)
-        dar = self.__post_proc_data_netcdf4(dar, tile, self._ref_nodatavals[data_variable])
+        dar = self.__post_proc_data_netcdf4(dar, dw_tile, dm_tile, self._ref_nodatavals[data_variable])
 
         return dar
 
@@ -356,12 +394,14 @@ class NetCdfReader(RasterDataReader):
 
         """
         tile_id = src_tile.parent_root.name
-        raster_access = RasterAccess(src_tile, dst_tile)
-        file_register = self.file_register.loc[self.file_register['tile_id'] == tile_id]
+        # create new tile representing the part to actually read
+        dw_tile = src_tile.parent_root.slice_by_geom(dst_tile)
+        raster_access = RasterAccess(dw_tile, dst_tile)
+        file_register = self.file_register.loc[self.file_register[self._tile_dim] == tile_id]
         filepaths = list(file_register['filepath'])
         nc_ds = MFDataset(filepaths, aggdim=agg_dim)
         nc_ds.set_auto_maskandscale(auto_decode)
-        tile_data = {data_variable: self.__load_data_per_data_variable_netcdf4(nc_ds, data_variable, src_tile,
+        tile_data = {data_variable: self.__load_data_per_data_variable_netcdf4(nc_ds, data_variable, dw_tile, src_tile,
                                                                                raster_access,
                                                                                decoder, decoder_kwargs)
                      for data_variable in data_variables}
@@ -374,7 +414,7 @@ class NetCdfReader(RasterDataReader):
                                  only_use_cftime_datetimes=False,
                                  only_use_python_datetimes=True)
 
-        return self._to_xarray(tile_data, src_tile, times, metadata)
+        return self._to_xarray(tile_data, dw_tile, times, metadata)
 
     def __read_xarray(self, dst_tile, data_variables=None, parallel=True, agg_dim='layer_id', compute=True,
                       auto_decode=False, decoder=None, decoder_kwargs=None, **kwargs) -> xr.Dataset:
@@ -415,7 +455,7 @@ class NetCdfReader(RasterDataReader):
 
         return xr.combine_by_coords(data)
 
-    def __post_proc_data_xarray(self, dar, tile, nodataval=0, compute=True) -> xr.DataArray:
+    def __post_proc_data_xarray(self, dar, dw_tile, dm_tile, nodataval=0, compute=True) -> xr.DataArray:
         """
         Masks the given array.
 
@@ -423,7 +463,9 @@ class NetCdfReader(RasterDataReader):
         ----------
         dar : xr.DataArray
             Array to mask.
-        tile : Tile
+        dw_tile : Tile
+            Tile representing the data window to read from.
+        dm_tile : Tile
             Tile to extract a data mask from.
         nodataval : float, optional
             No data value being assigned where the mask values evaluate to false (defaults to 0).
@@ -438,12 +480,15 @@ class NetCdfReader(RasterDataReader):
         """
         if compute:
             dar = dar.compute()
-        if tile.mask is not None:
-            dar = dar.where(tile.mask.astype(bool), nodataval)
+        if dm_tile.mask is not None:
+            raster_access = RasterAccess(dm_tile, dw_tile, src_root_raster_geom=dw_tile)
+            tile_mask = np.zeros(dw_tile.shape)
+            tile_mask[raster_access.src_row_slice, raster_access.src_col_slice] = dm_tile.mask
+            dar = dar.where(tile_mask.astype(bool), nodataval)
 
         return dar
 
-    def __load_data_per_data_variable_xarray(self, ds, data_variable, tile, raster_access,
+    def __load_data_per_data_variable_xarray(self, ds, data_variable, dw_tile, dm_tile, raster_access,
                                       decoder=None, decoder_kwargs=None, compute=True) -> xr.DataArray:
         """
         Selects, mask and slices an xarray data array.
@@ -454,7 +499,9 @@ class NetCdfReader(RasterDataReader):
             Dataset to subset.
         data_variable : str
             Data variable to select.
-        tile : Tile
+        dw_tile : Tile
+            Tile representing the data window to read from.
+        dm_tile : Tile
             Tile to extract a data mask from.
         raster_access : RasterAccess
             Helper instance to slice the data array.
@@ -472,7 +519,7 @@ class NetCdfReader(RasterDataReader):
 
         """
         dar = self.__load_data_per_data_variable(ds, data_variable, raster_access, decoder, decoder_kwargs)
-        dar = self.__post_proc_data_xarray(dar, tile, self._ref_nodatavals[data_variable], compute)
+        dar = self.__post_proc_data_xarray(dar, dw_tile, dm_tile, self._ref_nodatavals[data_variable], compute)
 
         return dar
 
@@ -511,13 +558,15 @@ class NetCdfReader(RasterDataReader):
 
         """
         tile_id = src_tile.parent_root.name
-        raster_access = RasterAccess(src_tile, dst_tile)
-        file_register = self.file_register.loc[self.file_register['tile_id'] == tile_id]
+        # create new tile representing the part to actually read
+        dw_tile = src_tile.parent_root.slice_by_geom(dst_tile)
+        raster_access = RasterAccess(dw_tile, dst_tile)
+        file_register = self.file_register.loc[self.file_register[self._tile_dim] == tile_id]
         filepaths = file_register['filepath']
         xr_ds = xr.open_mfdataset(filepaths, concat_dim=agg_dim, combine="nested", data_vars='minimal',
                                   coords='minimal', compat='override', parallel=parallel,
                                   mask_and_scale=auto_decode, **kwargs)
-        data_tile = {data_variable: self.__load_data_per_data_variable_xarray(xr_ds, data_variable, src_tile,
+        data_tile = {data_variable: self.__load_data_per_data_variable_xarray(xr_ds, data_variable, dw_tile, src_tile,
                                                                               raster_access, decoder,
                                                                               decoder_kwargs, compute)
                      for data_variable in data_variables}
@@ -544,8 +593,8 @@ class NetCdfReader(RasterDataReader):
         xrds : xr.Dataset
 
         """
-        space_dim_names = list(self._ref_space_dims.keys())
-        stack_dim_names = list(self._ref_stack_dims.keys())
+        space_dim_names = self._ref_space_dims
+        stack_dim_names = self._ref_stack_dims
         all_dim_names = stack_dim_names + space_dim_names
         coord_dict = dict()
         coord_dict[stack_dim_names[0]] = times
@@ -614,7 +663,7 @@ class NetCdfWriter(RasterDataWriter):
                          fn_pattern=fn_pattern, fn_formatter=fn_formatter)
 
     @classmethod
-    def from_data(self, data, filepath, mosaic=None, **kwargs) -> "NetCdfWriter":
+    def from_data(self, data, filepath, mosaic=None, tile_dimension='tile_id', **kwargs) -> "NetCdfWriter":
         """
         Creates `NetCdfWriter` instance from an xarray.Dataset instance and a target file path, i.e. this function
         should help to write/export the whole image stack to one file.
@@ -629,6 +678,9 @@ class NetCdfWriter(RasterDataWriter):
             Mosaic representing the spatial allocation of the given file. The tiles of the mosaic have to match the
             ID's/names of the 'tile_id' column. If it is None, a one-tile mosaic will be created from the given
             mosaic.
+        tile_dimension : str, optional
+            Dimension/column name of the dimension containing tile ID's in correspondence with the tiles in `mosaic`.
+            Defaults to 'tile_id'.
         kwargs : dict, optional
             Key-word arguments for initialising the `NetCdfWriter` class.
 
@@ -638,10 +690,10 @@ class NetCdfWriter(RasterDataWriter):
 
         """
         file_register_dict = dict()
-        file_register_dict['tile_id'] = ['0']
+        file_register_dict[tile_dimension] = ['0']
         file_register_dict['filepath'] = [filepath]
         file_register = pd.DataFrame(file_register_dict)
-        return super().from_xarray(data, file_register, mosaic=mosaic, **kwargs)
+        return super().from_xarray(data, file_register, mosaic=mosaic, tile_dimension=tile_dimension, **kwargs)
 
     def __get_encoding_info_from_data(self, data, data_variables) -> Tuple[dict, dict, dict, dict]:
         """
@@ -678,7 +730,7 @@ class NetCdfWriter(RasterDataWriter):
 
         return nodatavals, scale_factors, offsets, dtypes
 
-    def write(self, data, apply_tiling=False, data_variables=None, encoder=None, encoder_kwargs=None, overwrite=False,
+    def write(self, data, use_mosaic=False, data_variables=None, encoder=None, encoder_kwargs=None, overwrite=False,
               unlimited_dims=None, **kwargs):
         """
         Writes a certain chunk of NetCDF data to disk.
@@ -687,8 +739,8 @@ class NetCdfWriter(RasterDataWriter):
         ----------
         data : xr.Dataset
             Data chunk to be written to disk or being appended to existing mosaic.
-        apply_tiling : bool, optional
-            True if data should be tiled according to the mosaic.
+        use_mosaic : bool, optional
+            True if data should be written according to the mosaic.
             False if data composes a new tile and should not be tiled (default).
         data_variables : list of str, optional
             Data variables to write. Defaults to None, i.e. all data variables are written.
@@ -714,9 +766,9 @@ class NetCdfWriter(RasterDataWriter):
         nodatavals, scale_factors, offsets, dtypes = self.__get_encoding_info_from_data(data, data_variables)
 
         for filepath, file_group in self._file_register.groupby('filepath'):
-            tile_id = file_group.iloc[0].get('tile_id', '0')
+            tile_id = file_group.iloc[0].get(self._tile_dim, '0')
 
-            if apply_tiling:
+            if use_mosaic:
                 src_tile = self._mosaic[tile_id]
                 if not src_tile.intersects(data_geom):
                     continue
@@ -751,16 +803,16 @@ class NetCdfWriter(RasterDataWriter):
             nc_file.write(data_write, row=raster_access.dst_window[0], col=raster_access.dst_window[1],
                           encoder=encoder, encoder_kwargs=encoder_kwargs)
 
-    def export(self, apply_tiling=False, data_variables=None, encoder=None, encoder_kwargs=None, overwrite=False,
+    def export(self, use_mosaic=False, data_variables=None, encoder=None, encoder_kwargs=None, overwrite=False,
                unlimited_dims=None, **kwargs):
         """
         Writes all internally stored data to disk.
 
         Parameters
         ----------
-        apply_tiling : bool, optional
-            True if the internal data should be tiled according to the mosaic.
-            False if the internal data composes a new tile and should not be tiled (default).
+        use_mosaic : bool, optional
+            True if data should be written according to the mosaic.
+            False if data composes a new tile and should not be tiled (default).
         data_variables : list of str, optional
             Data variables to write. Defaults to None, i.e. all data variables are written.
         encoder : callable, optional
@@ -775,7 +827,7 @@ class NetCdfWriter(RasterDataWriter):
             Key-word arguments for creating a `NetCdf4File` instance.
 
         """
-        self.write(self.data_view, apply_tiling, data_variables, encoder, encoder_kwargs, overwrite, unlimited_dims,
+        self.write(self.data_view, use_mosaic, data_variables, encoder, encoder_kwargs, overwrite, unlimited_dims,
                    **kwargs)
 
 

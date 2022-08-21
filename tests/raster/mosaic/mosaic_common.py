@@ -10,7 +10,7 @@ from geospade.raster import MosaicGeometry
 
 def write_pixel_window(writer, row, col, height, width):
    writer_sel = writer.select_px_window(row, col, height, width)
-   writer.write(writer_sel.data_view, apply_tiling=True)
+   writer.write(writer_sel.data_view, use_mosaic=True)
 
    return writer
 

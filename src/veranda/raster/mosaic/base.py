@@ -149,7 +149,8 @@ class RasterData(metaclass=abc.ABCMeta):
     @property
     def file_register(self) -> pd.DataFrame:
         """ File register of the raster data object. """
-        return self._file_register.drop(columns=['file_id'])
+        return self._file_register.drop(columns=['file_id']) \
+            if 'file_id' in self._file_register.columns else self._file_register
 
     @property
     def filepaths(self) -> List[str]:
@@ -248,12 +249,18 @@ class RasterData(metaclass=abc.ABCMeta):
             Raster geometry representing the spatial extent of the xarray dataset.
 
         """
-        ds_sref = data.get('spatial_ref')
-        if ds_sref is None and sref is None:
+        coord_names = list(data.coords.keys())
+        sref_coord = None
+        for coord_name in coord_names:
+            if data[coord_name].attrs.get('spatial_ref'):
+                sref_coord = data[coord_name]
+                break
+
+        if sref_coord is None and sref is None:
             err_msg = "Neither the data contains CRS information nor the keyword."
             raise ValueError(err_msg)
-        if ds_sref is not None:
-            sref = SpatialRef(ds_sref.attrs.get('spatial_ref'))
+        if sref_coord is not None:
+            sref = SpatialRef(sref_coord.attrs.get('spatial_ref'))
 
         x_pixel_size, y_pixel_size = RasterData._pixel_sizes_from_data(data)
         extent = RasterData._extent_from_data(data)
@@ -332,7 +339,7 @@ class RasterData(metaclass=abc.ABCMeta):
             return new_raster_data.select_tiles(tile_names, inplace=True)
 
         self._file_register = self._file_register.loc[self._file_register[self._tile_dim].isin(tile_names)]
-        self._mosaic.select_by_tile_names(tile_names)
+        self._mosaic.select_by_tile_names(tile_names, inplace=True)
 
         return self
 
@@ -404,11 +411,11 @@ class RasterData(metaclass=abc.ABCMeta):
                 wrn_msg = "Pixels are outside the extent of the raster mosaic."
                 warnings.warn(wrn_msg)
 
-        if len(self._mosaic.all_tiles) == 1:
-            tile_oi = self._mosaic.all_tiles[0]
+        if len(self._mosaic.tiles) == 1:
+            tile_oi = self._mosaic.tiles[0]
             tile_oi.slice_by_rc(row, col, height=height, width=width, inplace=True, name='0')
             tile_oi.active = True
-            self._mosaic.from_tile_list([tile_oi], inplace=True)
+            self._mosaic = self._mosaic.from_tile_list([tile_oi])
 
         return self
 
@@ -451,7 +458,7 @@ class RasterData(metaclass=abc.ABCMeta):
             row, col = tile_oi.xy2rc(x, y, sref=sref)
             tile_oi.slice_by_rc(row, col, inplace=True, name='0')
             tile_oi.active = True
-            self._mosaic.from_tile_list([tile_oi], inplace=True)
+            self._mosaic = self._mosaic.from_tile_list([tile_oi])
             self._file_register = self._file_register[self._file_register[self._tile_dim] == tile_oi.parent_root.name]
         else:
             wrn_msg = "Coordinates are outside the spatial extent of the raster mosaic files."
@@ -521,8 +528,8 @@ class RasterData(metaclass=abc.ABCMeta):
                 wrn_msg = "Polygon is outside the spatial extent of the raster mosaic."
                 warnings.warn(wrn_msg)
 
-        sliced_mosaic = self._mosaic.slice_by_geom(polygon, active_only=False, apply_mask=apply_mask, inplace=False,
-                                                   name='0')
+        sliced_mosaic = self._mosaic.slice_by_geom(polygon, sref=sref, active_only=False, apply_mask=apply_mask,
+                                                   inplace=False, name='0')
         if sliced_mosaic is None:
             wrn_msg = "Polygon is outside the spatial extent of the raster mosaic files."
             warnings.warn(wrn_msg)
@@ -549,7 +556,7 @@ class RasterData(metaclass=abc.ABCMeta):
             data = xr.Dataset(xrars)
 
             if self._file_dim in data.coords:
-                data = data.sel({self._file_dim: list(set(self._file_register[self._file_dim]))})
+                data = data.sel({self._file_dim: list(np.unique(self._file_register[self._file_dim]))})
 
         return data
 
@@ -724,7 +731,8 @@ class RasterDataReader(RasterData):
             self.read(*args, **kwargs)
 
     @staticmethod
-    def _create_tile_and_layer_info_from_files(filepaths, tile_class, file_class) -> Tuple[List[Tile], list, list]:
+    def _create_tile_and_layer_info_from_files(filepaths, tile_class, file_class,
+                                               file_class_kwargs) -> Tuple[List[Tile], list, list]:
         """
         Loops over a given list of files to assign a tile and layer to each file and creates the corresponding indexes.
 
@@ -736,6 +744,8 @@ class RasterDataReader(RasterData):
             Class constructor for a tile class.
         file_class : class
             Class constructor for a file class.
+        file_class_kwargs : dict
+            Keyword arguments for calling `file_class`.
 
         Returns
         -------
@@ -747,12 +757,13 @@ class RasterDataReader(RasterData):
             List of layer ids containing one ID per file.
 
         """
+        file_class_kwargs = file_class_kwargs or dict()
         tile_ids = []
         layer_ids = []
         tiles = []
         tile_idx = 0
         for filepath in filepaths:
-            with file_class(filepath, 'r') as f:
+            with file_class(filepath, 'r', **file_class_kwargs) as f:
                 sref_wkt = f.sref_wkt
                 geotrans = f.geotrans
                 n_rows, n_cols = f.raster_shape
@@ -836,7 +847,8 @@ class RasterDataWriter(RasterData):
             file_register = RasterDataWriter._add_filepaths_to_file_register(file_register, dirpath,
                                                                              fn_pattern, fn_formatter)
 
-        super().__init__(file_register, mosaic, data=data, stack_dimension=stack_dimension, stack_coords=stack_coords)
+        super().__init__(file_register, mosaic, data=data, stack_dimension=stack_dimension, stack_coords=stack_coords,
+                         tile_dimension=tile_dimension)
 
     @abc.abstractmethod
     def write(self, data, encoder=None, encoder_kwargs=None, overwrite=False, **kwargs):
@@ -907,12 +919,8 @@ class RasterDataWriter(RasterData):
         RasterDataWriter
 
         """
-        sref = mosaic.sref if mosaic is not None else None
-        raster_geom = cls.raster_geom_from_data(data, sref=sref)
-        n_rows, n_cols = raster_geom.shape
-        tile = Tile(n_rows, n_cols, raster_geom.sref, geotrans=raster_geom.geotrans,
-                    name='0')
-        mosaic = mosaic or MosaicGeometry.from_tile_list([tile], check_consistency=False)
+        if mosaic is None:
+            mosaic = cls._mosaic_from_data(data)
         return cls(mosaic, file_register=file_register, data=data, **kwargs)
 
     def load(self, *args, **kwargs):
@@ -920,6 +928,30 @@ class RasterDataWriter(RasterData):
         if self._data is not None and self._data_geom is not None:
             self._data = self.data_view
             self._data_geom.parent = None
+
+    @staticmethod
+    def _mosaic_from_data(data, sref=None) -> MosaicGeometry:
+        """
+        Creates a default mosaic from a given xarray dataset.
+
+        Parameters
+        ----------
+        data : xr.Dataset
+            Raster data.
+        sref : geospade.crs.SpatialRef, optional
+            CRS of the mosaic if not given under the 'spatial_ref' variable of `data`.
+
+        Returns
+        -------
+        MosaicGeometry :
+            Mosaic with one tile '0'.
+
+        """
+        raster_geom = RasterDataWriter.raster_geom_from_data(data, sref=sref)
+        n_rows, n_cols = raster_geom.shape
+        tile = Tile(n_rows, n_cols, raster_geom.sref, geotrans=raster_geom.geotrans,
+                    name='0')
+        return MosaicGeometry.from_tile_list([tile], check_consistency=False)
 
     @staticmethod
     def _file_register_from_data(data, stack_dimension) -> pd.DataFrame:
