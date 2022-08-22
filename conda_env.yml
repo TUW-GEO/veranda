@@ -13,5 +13,5 @@ dependencies:
     - netcdf4
     - pip
     - pip:
-          - geospade
+          - git+https://github.com/TUW-GEO/geospade.git
           - rioxarray

@@ -1026,7 +1026,8 @@ class NetCdfXrFile:
                                      decode_coords="all")
 
         self.geotrans = tuple(self.src.rio.transform())
-        self.sref_wkt = self.src.rio.crs
+        rio_crs = self.src.rio.crs
+        self.sref_wkt = rio_crs.to_wkt() if rio_crs is not None else None
         self.metadata = self.src.attrs
         self._reset()
 

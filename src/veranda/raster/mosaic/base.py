@@ -268,16 +268,26 @@ class RasterData(metaclass=abc.ABCMeta):
                                                  x_pixel_size=x_pixel_size, y_pixel_size=y_pixel_size, **kwargs)
         return raster_geom
 
-    def apply_nan(self):
+    def apply_nan(self, nodatavals=None):
         """
-        Converts no data values given as an attribute '_FillValue' to np.nan. Note that this replacement implicitly
-        converts the data format to float.
+        Converts no data values given as an attribute '_FillValue' or keyword `nodatavals` to np.nan.
+
+        Parameters
+        ----------
+        nodatavals : dict
+            Data variable name to no data value map.
+
+        Notes
+        -----
+        This replacement implicitly converts the data format to float.
 
         """
+        nodatavals = nodatavals or dict()
         if self._data is not None:
             for dvar in self._data.data_vars:
                 dar = self._data[dvar]
-                self._data[dvar] = dar.where(dar != dar.attrs['_FillValue'])
+                nodataval = dar.attrs.get('_FillValue', nodatavals.get(dvar, 0))
+                self._data[dvar] = dar.where(dar != nodataval)
 
     def select(self, cmds, inplace=False) -> "RasterData":
         """

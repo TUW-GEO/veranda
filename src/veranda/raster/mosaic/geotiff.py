@@ -79,7 +79,7 @@ class GeoTiffAccess(RasterAccess):
 class GeoTiffReader(RasterDataReader):
     """ Allows to read and manage a stack of GeoTIFF data. """
     def __init__(self, file_register, mosaic, stack_dimension='layer_id', stack_coords=None, tile_dimension='tile_id',
-                 space_dims=None):
+                 space_dims=None, file_class=GeoTiffFile, file_class_kwargs=None):
         """
         Constructor of `GeoTiffReader`.
 
@@ -108,13 +108,18 @@ class GeoTiffReader(RasterDataReader):
             Defaults to 'tile_id'.
         space_dims : list, optional
             Dictionary containing the spatial dimension names. By default it is set to ['y', 'x'].
+        file_class : class, optional
+            Class for opening GeoTIFF files. Defaults to `GeoTiffFile`.
+        file_class_kwargs : dict, optional
+            Keyword arguments for `file_class`.
 
         """
         super().__init__(file_register, mosaic, stack_dimension=stack_dimension, stack_coords=stack_coords,
                          tile_dimension=tile_dimension)
 
+        file_class_kwargs = file_class_kwargs or dict()
         ref_filepath = self._file_register['filepath'].iloc[0]
-        with GeoTiffFile(ref_filepath, 'r') as gt_file:
+        with file_class(ref_filepath, 'r', **file_class_kwargs) as gt_file:
             self._ref_dtypes = gt_file.dtypes
             self._ref_nodatavals = gt_file.nodatavals
 
@@ -218,6 +223,11 @@ class GeoTiffReader(RasterDataReader):
 
         return cls(file_register, mosaic_geom, stack_dimension=stack_dimension, tile_dimension=tile_dimension,
                    **kwargs)
+
+    def apply_nan(self):
+        """ Converts no data values given as an attribute '_FillValue' or keyword `nodatavals` to np.nan. """
+        nodatavals = {dvar: self._ref_nodatavals[i] for i, dvar in enumerate(self.data_view.data_vars)}
+        super().apply_nan(nodatavals=nodatavals)
 
     def read(self, bands=1, band_names=None, engine='vrt', n_cores=1,
              auto_decode=False, decoder=None, decoder_kwargs=None) -> "GeoTiffReader":
@@ -378,7 +388,7 @@ class GeoTiffReader(RasterDataReader):
             Keyword arguments for the decoder.
 
         """
-        decoder_kwargs = decoder_kwargs or None
+        decoder_kwargs = decoder_kwargs or dict()
         global_file_register = self._file_register
 
         with Pool(n_cores, initializer=read_init, initargs=(global_file_register, access_map, shm_map,

@@ -60,7 +60,7 @@ class NetCdfReader(RasterDataReader):
         with file_class(ref_filepath, 'r', **file_class_kwargs) as nc_file:
             self._ref_data_variables = nc_file.data_variables
             self._ref_nodatavals = nc_file.nodatavals
-            self._ref_scale_factors = nc_file.nodatavals
+            self._ref_scale_factors = nc_file.scale_factors
             self._ref_offsets = nc_file.offsets
             self._ref_dtypes = nc_file.dtypes
             self._ref_metadata = nc_file.metadata
@@ -181,6 +181,10 @@ class NetCdfReader(RasterDataReader):
 
         return cls(file_register, mosaic_geom, stack_dimension=stack_dimension, tile_dimension=tile_dimension,
                    **kwargs)
+
+    def apply_nan(self):
+        """ Converts no data values given as an attribute '_FillValue' or keyword `nodatavals` to np.nan. """
+        super().apply_nan(nodatavals=self._ref_nodatavals)
 
     def read(self, data_variables=None, engine='netcdf4', agg_dim='time', parallel=True, compute=True, auto_decode=False,
              decoder=None, decoder_kwargs=None, **kwargs) -> "NetCdfReader":
