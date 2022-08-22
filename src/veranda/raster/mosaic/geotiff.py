@@ -444,9 +444,13 @@ class GeoTiffReader(RasterDataReader):
         """
         dims = [self._file_dim] + self._ref_space_dims
 
+        # retrieve file register with unique stack dimension
+        ref_tile_id = list(self.file_register[self._tile_dim])[0]
+        file_register_uni = self._file_register.loc[self._file_register[self._tile_dim] == ref_tile_id]
+
         coord_dict = dict()
         for coord in self._file_coords:
-            coord_dict[coord] = self._file_register[coord]
+            coord_dict[coord] = file_register_uni[coord]
 
         coord_dict[self._ref_space_dims[0]] = self._data_geom.y_coords
         coord_dict[self._ref_space_dims[1]] = self._data_geom.x_coords
