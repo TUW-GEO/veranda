@@ -2,6 +2,11 @@
 Changelog
 =========
 
+Version 1.0.1
+=============
+
+- introduced rounding of spatial coordinates when accessing an xarray dataset
+
 Version 1.0.0
 =============
 - completely new package and module structure
