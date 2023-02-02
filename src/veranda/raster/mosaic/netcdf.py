@@ -10,6 +10,7 @@ from typing import Tuple
 from geospade.crs import SpatialRef
 from geospade.raster import Tile
 from geospade.raster import MosaicGeometry
+from geospade import DECIMALS
 
 from veranda.utils import to_list
 from veranda.raster.native.netcdf import NetCdf4File
@@ -777,7 +778,8 @@ class NetCdfWriter(RasterDataWriter):
                 if not src_tile.intersects(data_geom):
                     continue
                 dst_tile = data_geom.slice_by_geom(src_tile, inplace=False)
-                data_write = data_filt.sel(**{space_dims[0]: dst_tile.y_coords, space_dims[1]: dst_tile.x_coords})
+                data_write = data_filt.sel(**{space_dims[0]: np.around(dst_tile.y_coords, decimals=DECIMALS),
+                                              space_dims[1]: np.around(dst_tile.x_coords, decimals=DECIMALS)})
             else:
                 dst_tile = data_geom
                 src_tile = data_geom
