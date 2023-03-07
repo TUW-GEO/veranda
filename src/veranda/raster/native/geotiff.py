@@ -130,7 +130,7 @@ class GeoTiffFile:
 
         """
         if '.zip' in filepath:
-            filepath = filepath.lstrip('/vsizip/')  # removes gdal virtual file system prefix to open w ZipFile
+            filepath = filepath.replace('/vsizip/', '')  # removes gdal virtual file system prefix to open w ZipFile
             zip_filepath, inzip_filepath = filepath.split('.zip/')
             with ZipFile(zip_filepath + '.zip') as zip:
                 with zip.open(inzip_filepath, 'r') as f:
@@ -180,7 +180,7 @@ class GeoTiffFile:
         """
         if self.mode == 'r':
             if '.zip' in self.filepath:
-                self.filepath = self.filepath.lstrip('/vsizip/')  # removes gdal virtual file system prefix if its there
+                self.filepath = self.filepath.replace('/vsizip/', '')  # removes gdal virtual file system prefix if its there
                 zip_filepath, inzip_filepath = self.filepath.split('.zip/')
                 zip_filepath += '.zip'
                 if not os.path.exists(zip_filepath):  # checks zip file
