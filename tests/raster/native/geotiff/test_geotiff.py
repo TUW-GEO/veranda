@@ -151,7 +151,7 @@ def test_read_one_band_zip(filepath):
             src.write(data)
         zip.write(filepath)
 
-    read_filepath = zip_filepath + '/' + filename
+    read_filepath = os.path.join(zip_filepath, filename)
 
     with GeoTiffFile(read_filepath) as src:
         ds = src.read()
