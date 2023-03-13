@@ -183,13 +183,13 @@ class GeoTiffFile:
             if '.zip' in self.filepath:
                 if self.filepath.startswith('/vsizip/'):
                     self.filepath = self.filepath[len('/vsizip/'):]  # removes gdal virtual file system prefix if its there
-                zip_filepath, inzip_filepath = self.filepath.split('.zip')
+                zip_filepath, inzip_filepath = self.filepath.split('.zip/')
                 zip_filepath += '.zip'
                 if not os.path.exists(zip_filepath):  # checks zip file
                     err_msg = f"File '{zip_filepath}' does not exist."
                     raise FileNotFoundError(err_msg)
                 with ZipFile(zip_filepath) as zip:
-                    if inzip_filepath[1:] not in zip.namelist():  # checks file in zip
+                    if inzip_filepath not in zip.namelist():  # checks file in zip
                         err_msg = f"File '{self.filepath}' does not exist."
                         raise FileNotFoundError(err_msg)
                 self.filepath = '/vsizip/' + self.filepath  # adds the gdal vsi prefix
