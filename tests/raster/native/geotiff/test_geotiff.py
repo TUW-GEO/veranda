@@ -141,6 +141,7 @@ def test_sref(filepath):
 
 
 def test_read_one_band_zip(filepath):
+
     data = np.ones((1, 100, 100), dtype=np.float32)
 
     filename = os.path.basename(filepath)
@@ -151,7 +152,9 @@ def test_read_one_band_zip(filepath):
             src.write(data)
         zip.write(filepath)
 
-    read_filepath = zip_filepath + '/' + filename
+        in_zip_filename = [name for name in zip.namelist() if name.endswith('.tif')][0]
+
+    read_filepath = os.path.join(zip_filepath, in_zip_filename)
 
     with GeoTiffFile(read_filepath) as src:
         ds = src.read()
