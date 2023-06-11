@@ -24,13 +24,14 @@ from veranda.raster.mosaic.base import RasterDataReader, RasterDataWriter, Raste
 PROC_OBJS = {}
 
 
-def read_init(fr, am, sm, sd, td, ad, dc, dk):
+def read_init(fr, am, sm, sd, td, si, ad, dc, dk):
     """ Helper method for setting the entries of global variable `PROC_OBJS` to be available during multiprocessing. """
     PROC_OBJS['global_file_register'] = fr
     PROC_OBJS['access_map'] = am
     PROC_OBJS['shm_map'] = sm
     PROC_OBJS['stack_dimension'] = sd
     PROC_OBJS['tile_dimension'] = td
+    PROC_OBJS['stack_ids'] = si
     PROC_OBJS['auto_decode'] = ad
     PROC_OBJS['decoder'] = dc
     PROC_OBJS['decoder_kwargs'] = dk
@@ -392,7 +393,7 @@ class GeoTiffReader(RasterDataReader):
         global_file_register = self._file_register
 
         with Pool(n_cores, initializer=read_init, initargs=(global_file_register, access_map, shm_map,
-                                                            self._file_dim, self._tile_dim,
+                                                            self._file_dim, self._tile_dim, self.layer_ids,
                                                             auto_decode, decoder, decoder_kwargs)) as p:
             p.map(read_vrt_stack, access_map.keys())
 
@@ -655,26 +656,32 @@ def read_vrt_stack(tile_id):
     access_map = PROC_OBJS['access_map']
     shm_map = PROC_OBJS['shm_map']
     tile_dimension = PROC_OBJS['tile_dimension']
+    stack_dimension = PROC_OBJS['stack_dimension']
+    stack_ids = PROC_OBJS['stack_ids']
 
     gt_access = access_map[tile_id]
     bands = list(shm_map.keys())
     file_register = global_file_register.loc[global_file_register[tile_dimension] == tile_id]
 
-    path = tempfile.gettempdir()
-    vrt_filepath = os.path.join(path, f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex}.vrt")
-    while os.path.exists(vrt_filepath):
+    if len(file_register) > 0:
+        path = tempfile.gettempdir()
         vrt_filepath = os.path.join(path, f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex}.vrt")
-    filepaths = list(file_register['filepath'])
-    create_vrt_file(filepaths, vrt_filepath, gt_access.src_shape, gt_access.src_wkt, gt_access.src_geotrans,
-                    bands=bands)
+        while os.path.exists(vrt_filepath):
+            vrt_filepath = os.path.join(path, f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex}.vrt")
 
-    src = gdal.Open(vrt_filepath, gdal.GA_ReadOnly)
-    vrt_data = src.ReadAsArray(*gt_access.gdal_args)
-    for band in bands:
-        _assign_vrt_stack_per_band(tile_id, band, src, vrt_data)
+        filepaths = list(file_register['filepath'])
+        create_vrt_file(filepaths, vrt_filepath, gt_access.src_shape, gt_access.src_wkt, gt_access.src_geotrans,
+                        bands=bands)
+
+        layer_ids = [stack_ids.index(stack_id) for stack_id in file_register[stack_dimension]]
+
+        src = gdal.Open(vrt_filepath, gdal.GA_ReadOnly)
+        vrt_data = src.ReadAsArray(*gt_access.gdal_args)
+        for band in bands:
+            _assign_vrt_stack_per_band(tile_id, layer_ids, band, src, vrt_data)
 
 
-def _assign_vrt_stack_per_band(tile_id, band, src, vrt_data):
+def _assign_vrt_stack_per_band(tile_id, layer_ids, band, src, vrt_data):
     """
     Assigns loaded raster data to shared memory array for a specific band.
 
@@ -718,7 +725,7 @@ def _assign_vrt_stack_per_band(tile_id, band, src, vrt_data):
 
     shm_rar, shm_ar_shape = shm_map[band]
     shm_data = np.frombuffer(shm_rar, dtype=dtype).reshape(shm_ar_shape)
-    shm_data[:, gt_access.dst_row_slice, gt_access.dst_col_slice] = band_data
+    shm_data[layer_ids, gt_access.dst_row_slice, gt_access.dst_col_slice] = band_data
 
 
 def read_single_files(file_idx):
