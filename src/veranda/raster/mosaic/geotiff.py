@@ -230,7 +230,7 @@ class GeoTiffReader(RasterDataReader):
         nodatavals = {dvar: self._ref_nodatavals[i] for i, dvar in enumerate(self.data_view.data_vars)}
         super().apply_nan(nodatavals=nodatavals)
 
-    def read(self, bands=1, band_names=None, engine='vrt', n_cores=1,
+    def read(self, bands=1, band_names=None, dst_tile=None, engine='vrt', n_cores=1,
              auto_decode=False, decoder=None, decoder_kwargs=None) -> "GeoTiffReader":
         """
         Reads data from disk.
@@ -242,6 +242,9 @@ class GeoTiffReader(RasterDataReader):
         band_names : tuple of str or str, optional
             Names associated with the respective bands of the GeoTIFF files. Defaults to None, i.e. the band numbers
             will be used as a name.
+        dst_tile : Tile, optional
+            Destination tile of the region to read data from. Defaults to none, i.e. the extent of the (sliced) mosaic
+            is used.
         engine : str, optional
             Engine used in the background to read data. The following options are available:
                 - 'vrt' : Uses GDAL's VRT format to stack the GeoTIFF files per tile and load them as once. This option
@@ -261,10 +264,11 @@ class GeoTiffReader(RasterDataReader):
         """
         bands = to_list(bands)
         band_names = to_list(band_names)
-        dst_tile = Tile.from_extent(self._mosaic.outer_extent, sref=self._mosaic.sref,
-                                    x_pixel_size=self._mosaic.x_pixel_size,
-                                    y_pixel_size=self._mosaic.y_pixel_size,
-                                    name='0')
+        if dst_tile is None:  # TODO: add further checks if the given tile is compliant with the mosaic
+            dst_tile = Tile.from_extent(self._mosaic.outer_extent, sref=self._mosaic.sref,
+                                        x_pixel_size=self._mosaic.x_pixel_size,
+                                        y_pixel_size=self._mosaic.y_pixel_size,
+                                        name='0')
 
         shm_map = {band: self.__init_band_data(band, dst_tile) for band in bands}
         access_map = {src_tile.parent_root.name: GeoTiffAccess(src_tile, dst_tile) for src_tile in self._mosaic.tiles}
