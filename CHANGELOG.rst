@@ -2,6 +2,12 @@
 Changelog
 =========
 
+Version 1.1.0
+=============
+
+- enabled reading GeoTIFF files from ZIP files
+- fixed bug in parallel VRT stack reading (#16) and layer assignment (#19)
+
 Version 1.0.1
 =============
 
