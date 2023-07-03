@@ -137,9 +137,14 @@ class RasterData(metaclass=abc.ABCMeta):
         return self._data_geom
 
     @property
+    def layer_ids(self) -> list:
+        """ List : Sorted layers. """
+        return list(sorted(self._file_register[self._file_dim].unique()))
+
+    @property
     def n_layers(self) -> int:
         """ Maximum number of layers. """
-        return self._file_register.groupby([self._tile_dim])[self._tile_dim].count().max()
+        return len(self.layer_ids)
 
     @property
     def n_tiles(self) -> int:
