@@ -3,6 +3,7 @@ import pytest
 import numpy as np
 from osgeo import gdal
 from tempfile import mkdtemp
+from zipfile import ZipFile
 
 from veranda.raster.native.geotiff import GeoTiffFile
 
@@ -137,3 +138,27 @@ def test_sref(filepath):
             sref_val = src.sref_wkt
 
         assert sref_val == sref_ref
+
+
+def test_read_one_band_zip(filepath):
+
+    data = np.ones((1, 100, 100), dtype=np.float32)
+
+    filename = os.path.basename(filepath)
+    zip_filepath = os.path.splitext(filepath)[0] + r'.zip'
+
+    with ZipFile(zip_filepath, 'w') as zip:
+        with GeoTiffFile(filepath, mode='w') as src:
+            src.write(data)
+        zip.write(filepath)
+
+        in_zip_filename = [name for name in zip.namelist() if name.endswith('.tif')][0]
+
+    read_filepath = os.path.join(zip_filepath, in_zip_filename)
+
+    with GeoTiffFile(read_filepath) as src:
+        ds = src.read()
+
+    np.testing.assert_array_equal(ds[1], data[0, :, :])
+
+    os.remove(zip_filepath)
