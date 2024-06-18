@@ -16,7 +16,7 @@ from veranda.raster.gdalport import NUMPY_TO_GDAL_DTYPE, GDAL_TO_NUMPY_DTYPE
 class GeoTiffFile:
     """ GDAL wrapper for reading or writing a GeoTIFF file. """
     def __init__(self, filepath, mode='r', geotrans=(0, 1, 0, 0, 0, 1), sref_wkt=None, raster_shape=None,
-                 compression='LZW', metadata=None, is_bigtiff=False, is_tiled=True, blocksize=(512, 512),
+                 compression='LZW', metadata=None, is_bigtiff=False, copy_create=False, is_tiled=True, blocksize=(512, 512),
                  n_bands=1, dtypes='uint8', scale_factors=1, offsets=0, nodatavals=255, color_tbls=None,
                  color_intprs=None, overwrite=False, auto_decode=False):
         """
@@ -50,6 +50,9 @@ class GeoTiffFile:
         is_bigtiff : bool, optional
             True if the GeoTIFF file should be managed as a 'BIGTIFF' (required if the file will be above 4 GB).
             Defaults to False.
+        copy_create : bool, optional
+            True if the user wants to create a in-memory dataset using the gdal MEM driver (to enable CreateCopy() method)
+            Default to False.
         is_tiled : bool, optional
             True if the data should be tiled (default). False if the data should be stripped.
         blocksize : 2-tuple, optional
