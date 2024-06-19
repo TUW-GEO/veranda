@@ -16,7 +16,7 @@ from veranda.raster.gdalport import NUMPY_TO_GDAL_DTYPE, GDAL_TO_NUMPY_DTYPE
 class GeoTiffFile:
     """ GDAL wrapper for reading or writing a GeoTIFF file. """
     def __init__(self, filepath, mode='r', geotrans=(0, 1, 0, 0, 0, 1), sref_wkt=None, raster_shape=None,
-                 compression='LZW', metadata=None, is_bigtiff=False, is_tiled=True, blocksize=(512, 512),
+                 compression='LZW', metadata=None, is_bigtiff=False, copy_create=False, is_tiled=True, blocksize=(512, 512),
                  n_bands=1, dtypes='uint8', scale_factors=1, offsets=0, nodatavals=255, color_tbls=None,
                  color_intprs=None, overwrite=False, auto_decode=False):
         """
@@ -50,6 +50,9 @@ class GeoTiffFile:
         is_bigtiff : bool, optional
             True if the GeoTIFF file should be managed as a 'BIGTIFF' (required if the file will be above 4 GB).
             Defaults to False.
+        copy_create : bool, optional
+            True if the user wants to create a in-memory dataset using the gdal MEM driver (to enable CreateCopy() method)
+            Default to False.
         is_tiled : bool, optional
             True if the data should be tiled (default). False if the data should be stripped.
         blocksize : 2-tuple, optional
@@ -82,7 +85,6 @@ class GeoTiffFile:
 
         """
         self.src = None
-        self._driver = gdal.GetDriverByName('GTiff')
         self.filepath = filepath
         self.mode = mode
         self.geotrans = geotrans
@@ -96,6 +98,9 @@ class GeoTiffFile:
         self.overwrite = overwrite
         self.auto_decode = auto_decode
         self.bands = list(range(1, n_bands + 1))
+        self.copy_create = copy_create
+        if not self.copy_create:
+            self._driver = gdal.GetDriverByName('GTiff')
 
         dtypes = self.__to_dict(dtypes)
         scale_factors = self.__to_dict(scale_factors)
@@ -213,7 +218,10 @@ class GeoTiffFile:
                 else:
                     err_msg = f"File '{self.filepath}' exists."
                     raise FileExistsError(err_msg)
-            self.__create_driver()
+            if self.copy_create:
+                self.__create_mem_driver()
+            else:
+                self.__create_driver()
             self.src.SetGeoTransform(self.geotrans)
             if self.sref_wkt is not None:
                 self.src.SetProjection(self.sref_wkt)
@@ -273,7 +281,7 @@ class GeoTiffFile:
 
     def write(self, data, row=0, col=0, encoder=None, encoder_kwargs=None):
         """
-        Writes a NumPy array to a GeoTIFF file.
+        Writes a NumPy array to a GeoTIFF file or to an in-memory GDAL dataset.
 
         Parameters
         ----------
@@ -462,6 +470,21 @@ class GeoTiffFile:
         self.src = self._driver.Create(self.filepath, self.raster_shape[1], self.raster_shape[0],
                                        self.n_bands, NUMPY_TO_GDAL_DTYPE[self.dtypes[0]],
                                        options=gdal_opt)
+
+    def __create_mem_driver(self):
+        """ Creates a new GDAL dataset/driver in-memory (MEM) format."""
+        self.src = gdal.GetDriverByName('MEM').Create('', self.raster_shape[1], self.raster_shape[0],
+                                       self.n_bands, NUMPY_TO_GDAL_DTYPE[self.dtypes[0]])
+
+    def copycreate_cog(self, driver_name='COG'):
+        """Copies an in memory-format GDAL dataset and creates a new dataset in specified driver format """
+        gdal_opt = dict()
+        gdal_opt['COMPRESS'] = self.compression
+        gdal_opt['BLOCKSIZE'] = str(self.blocksize[0])
+        gdal_opt['BIGTIFF'] = 'YES' if self.is_bigtiff else 'NO'
+        gdal_opt = ['='.join((k, v)) for k, v in gdal_opt.items()]
+        self._driver = gdal.GetDriverByName(driver_name)
+        self._driver.CreateCopy(self.filepath, self.src, strict=0, options=gdal_opt)
 
     def __set_bands(self):
         """ Sets band attributes, i.e. default/fill value, no data value, scale factor, and offset. """
