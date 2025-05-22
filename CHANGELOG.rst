@@ -2,6 +2,18 @@
 Changelog
 =========
 
+Version 1.3.0
+=============
+
+- Update project metadata
+- Remove pkg dependency
+- Update github workflows
+
+Version 1.2.0
+=============
+
+- Add copy to cog for GeoTIFF files
+
 Version 1.1.0
 =============
 
